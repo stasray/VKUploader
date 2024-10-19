@@ -21,6 +21,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 import static java.lang.System.out;
@@ -30,11 +31,11 @@ public class Main {
     private static final long GROUP_ID = 227898147;
     private static final String token = "vk1.a.LnuaYLZ64A0pbow_txcAatzNEhbYrVn_o7EZDTIdARwUPYgfo1M-Qq9lavaI4SiXiUUXwfFmDDd11ZwlMt2wTVCuU-QXbvc3SuMTEzT-ajR0yQQ_TV0bf_OFWypYiI6KeZH-g8hurnlOy3C3PTOq9MlCDLcEWpAeCSfwmXvyE_LnyC4lHLKb9IXkZ6cAYQT0";
 
+    private static final PostgresManager db = new PostgresManager("jdbc:postgresql://localhost:5432/videos", "postgres", "0402");;
 
     public static void main(String[] args) {
         TransportClient transportClient = new HttpTransportClient();
         VkApiClient vk = new VkApiClient(transportClient);
-
 
         // Код, чтобы получить токен
 /*        try {
@@ -47,8 +48,8 @@ public class Main {
 
         File dir = new File("src/main/resources/vkkiller");
         List<File> lst = new ArrayList<File>();
-        for ( File file : dir.listFiles() ){
-            if ( file.isFile() )
+        for (File file : Objects.requireNonNull(dir.listFiles())) {
+            if (file.isFile())
                 lst.add(file);
         }
 
@@ -61,11 +62,11 @@ public class Main {
                         String str = vk.video().save(actor)
                                 .groupId(GROUP_ID)
                                 .execute().getUploadUrl().toString();
-                        out.println("Получил ссылку для видео " + video.getName());
-                        //uploadVideo(str, video.getAbsolutePath());
-                        out.println("Видео загружено: " + video.getName());
-                        printVideoMetadata(video);
-                    } catch (ApiException | ClientException /*| IOException*/ e) {
+                        out.printf("Получили ссылку для загрузки видео %s. Начинаю загрузку...%n\n", video.getName());
+                        uploadVideo(str, video.getAbsolutePath());
+                        out.printf("Видео успешно загружено: %s\n", video.getName());
+                        saveMetadata(video);
+                    } catch (ApiException | ClientException | IOException e) {
                         out.println(e.getMessage());
                         throw new RuntimeException(e);
                     }
@@ -74,10 +75,7 @@ public class Main {
             t.start();
 
         });
-
-
     }
-
 
 
     public static String askToken(String link) throws IOException, URISyntaxException {
@@ -113,7 +111,7 @@ public class Main {
         }
     }
 
-    private static void printVideoMetadata(File video) {
+    private static void saveMetadata(File video) {
         out.println("Video metadata:");
         out.println("  Name: " + video.getName());
         out.println("  Path: " + video.getAbsolutePath());
@@ -136,6 +134,15 @@ public class Main {
             out.println("  Resolution: " + videoStream.getInt("width") + "x" + videoStream.getInt("height"));
             out.println("  Bitrate: " + videoStream.getInt("bit_rate") + " kb/s");
             out.println("  Profile: " + videoStream.getString("profile"));
+
+            db.add(true,
+                    video.getName(),
+                    video.length(),
+                    getVideoDuration(video),
+                    videoStream.getString("codec_type"),
+                    videoStream.getInt("width") + "x" + videoStream.getInt("height"),
+                    videoStream.getInt("bit_rate"),
+                    videoStream.getString("profile"));
 
         } catch (IOException | JSONException e) {
             out.println("Error getting additional video metadata: " + e.getMessage());
