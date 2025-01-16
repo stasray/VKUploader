@@ -22,6 +22,8 @@ import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 import static java.lang.System.out;
@@ -29,17 +31,21 @@ import static java.lang.System.out;
 public class Main {
 
     private static final long GROUP_ID = 227898147;
-    private static final String token = "vk1.a.LnuaYLZ64A0pbow_txcAatzNEhbYrVn_o7EZDTIdARwUPYgfo1M-Qq9lavaI4SiXiUUXwfFmDDd11ZwlMt2wTVCuU-QXbvc3SuMTEzT-ajR0yQQ_TV0bf_OFWypYiI6KeZH-g8hurnlOy3C3PTOq9MlCDLcEWpAeCSfwmXvyE_LnyC4lHLKb9IXkZ6cAYQT0";
+    private static final String token = "vk1.a._8OLx_yt8gMRE8LLx_JTNuVAssYN9epmfeK41GYatdslg2NDuZMm_8WEJoqHuEdsS40JhiyuSmcJM6UcNABPjo7b5zcNOzaZ_a3lgxHvOu4Z2hBfjOnF0YbQCIXOu_K3HbNm9azxbP4UfyG8MZJdH3BdyYVrhLaLe2sirbuTNZ26cEqKMvZgdQNsMgY6sB0OzxmjhiK_DZnZvJfoSTKO0g";
 
-    private static final PostgresManager db = new PostgresManager("jdbc:postgresql://localhost:5432/videos", "postgres", "0402");;
+    private static final PostgresManager db = new PostgresManager("jdbc:postgresql://localhost:5432/postgres", "postgres", "root");;
+
+    private static final int MAX_CONCURRENT_UPLOADS = 5;
 
     public static void main(String[] args) {
+
+        //db.add(true, "test", 123, 123, "test", "tes", 123, "test");
+
         TransportClient transportClient = new HttpTransportClient();
         VkApiClient vk = new VkApiClient(transportClient);
 
-        // Код, чтобы получить токен
 /*        try {
-            askToken("https://oauth.vk.com/authorize?client_id=52502099&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=friends,video&response_type=token&v=5.59");
+            askToken("https://oauth.vk.com/authorize?client_id=52502099&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=friends,video,groups&response_type=token&v=5.59");
         } catch (IOException e) {
             throw new RuntimeException(e);
         } catch (URISyntaxException e) {
@@ -53,28 +59,41 @@ public class Main {
                 lst.add(file);
         }
 
+        ExecutorService executorService = Executors.newFixedThreadPool(MAX_CONCURRENT_UPLOADS);
         UserActor actor = new UserActor(198248840L, token);
+
+        FileSystemManager fileManager = new FileSystemManager(vk, actor, GROUP_ID);
+        fileManager.addDirectory("/test/folder/");
+        //fileManager.addFile("/test/folder/", "text.txt");
+        if (true) return;
+
         lst.forEach(video -> {
-            Thread t = new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        String str = vk.video().save(actor)
-                                .groupId(GROUP_ID)
-                                .execute().getUploadUrl().toString();
-                        out.printf("Получили ссылку для загрузки видео %s. Начинаю загрузку...%n\n", video.getName());
-                        uploadVideo(str, video.getAbsolutePath());
-                        out.printf("Видео успешно загружено: %s\n", video.getName());
-                        saveMetadata(video);
-                    } catch (ApiException | ClientException | IOException e) {
-                        out.println(e.getMessage());
-                        throw new RuntimeException(e);
-                    }
+            executorService.submit(() -> {
+                try {
+                    String str = vk.video().save(actor)
+                            .groupId(GROUP_ID)
+                            .execute().getUploadUrl().toString();
+                    out.printf("Получили ссылку для загрузки видео %s. Начинаю загрузку...%n\n", video.getName());
+                    uploadVideo(str, video.getAbsolutePath());
+                    out.printf("Видео успешно загружено: %s\n", video.getName());
+                    saveMetadata(video);
+                } catch (ApiException | ClientException | IOException e) {
+                    out.println(e.getMessage());
+                    throw new RuntimeException(e);
                 }
             });
-            t.start();
-
         });
+
+        // Завершение работы пула потоков
+        executorService.shutdown();
+        try {
+            // Ожидание завершения всех задач
+            if (!executorService.awaitTermination(60, java.util.concurrent.TimeUnit.SECONDS)) {
+                executorService.shutdownNow(); // Принудительное завершение, если задачи не завершились
+            }
+        } catch (InterruptedException e) {
+            executorService.shutdownNow();
+        }
     }
 
 
