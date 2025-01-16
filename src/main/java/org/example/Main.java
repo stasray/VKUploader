@@ -62,9 +62,14 @@ public class Main {
         ExecutorService executorService = Executors.newFixedThreadPool(MAX_CONCURRENT_UPLOADS);
         UserActor actor = new UserActor(198248840L, token);
 
-        FileSystemManager fileManager = new FileSystemManager(vk, actor, GROUP_ID);
-        fileManager.addDirectory("/test/folder/");
-        //fileManager.addFile("/test/folder/", "text.txt");
+        FileSystemManager fsm = new FileSystemManager(vk, actor, GROUP_ID);
+
+        fsm.syncWithVk();
+        //fsm.addDirectory("/documents2/photos");
+        fsm.delete("documents");
+        //fsm.addFile("/documents/photos/", "video.mp4");
+        fsm.updateTopic();
+
         if (true) return;
 
         lst.forEach(video -> {
