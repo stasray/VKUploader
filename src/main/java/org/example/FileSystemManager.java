@@ -4,181 +4,204 @@ import com.vk.api.sdk.client.VkApiClient;
 import com.vk.api.sdk.client.actors.UserActor;
 import com.vk.api.sdk.exceptions.ApiException;
 import com.vk.api.sdk.exceptions.ClientException;
+import com.vk.api.sdk.objects.board.Topic;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.Executors;
+import java.util.*;
+import java.util.stream.Collectors;
 
 public class FileSystemManager {
     private static int topicId = 0;
     private final VkApiClient vk;
     private final UserActor actor;
-
     private final Long groupId;
-
-    private HashMap<String, List<String>> fileSystem;
+    private final Map<String, List<String>> fileSystem;
 
     public FileSystemManager(VkApiClient vk, UserActor actor, Long groupId) {
         this.vk = vk;
         this.actor = actor;
+        this.groupId = groupId;
         this.fileSystem = new HashMap<>();
         fileSystem.put("/", new ArrayList<>());
-        this.groupId = groupId;
     }
 
+    // Метод для синхронизации состояния fileSystem с реальным содержимым топика
+    public void syncWithVk() {
+        try {
+            List<Topic> topics = vk.board().getTopics(actor, groupId).execute().getItems();
 
-    public void addFile(String path, String filename) {
-        String directoryPath = getDirectoryPath(path);
-        if (fileSystem.containsKey(directoryPath)) {
-            fileSystem.get(directoryPath).add(filename);
-            updateTopic();
-        } else {
-            throw new IllegalArgumentException("Directory doesn't exist");
+            // Находим топик "FOLDERS"
+            Optional<Topic> topicOptional = topics.stream()
+                    .filter(topic -> "FOLDERS".equals(topic.getTitle()))
+                    .findFirst();
+
+            if (topicOptional.isPresent()) {
+                topicId = topicOptional.get().getId();
+                String text = vk.board().getComments(actor, groupId, topicId).execute().getItems().get(0).getText();
+
+                // Обновляем fileSystem из текста
+                parseFileSystemFromText(text);
+            } else {
+                topicId = 0; // Сбрасываем topicId, если топик не найден
+                fileSystem.clear();
+                fileSystem.put("/", new ArrayList<>()); // Корневая директория
+            }
+        } catch (ApiException | ClientException e) {
+            throw new RuntimeException("Failed to sync with VK", e);
         }
     }
 
+    public Set<String> getFolders() {
+        return this.fileSystem.keySet();
+    }
+
+    public Set<String> getFolders(String path) {
+        final String fpath = normalizePath(path);
+        return this.fileSystem.keySet().stream().filter(s -> s.startsWith(fpath) && !fpath.equals(s)).collect(Collectors.toSet());
+    }
+
+    public List<String> getFiles(String path) {
+        final String fpath = normalizePath(path);;
+        return this.fileSystem.getOrDefault(fpath, new ArrayList<>());
+    }
+
+    // Метод для обновления топика
+    public void updateTopic() {
+        String text = buildTextRepresentation();
+        try {
+            if (topicId == 0) {
+                // Создаём новый топик
+                topicId = vk.board().addTopic(actor)
+                        .groupId(groupId)
+                        .title("FOLDERS")
+                        .text(text)
+                        .fromGroup(true)
+                        .execute();
+            } else {
+                // Обновляем существующий топик
+                int id = vk.board().getComments(actor).groupId(groupId).topicId(topicId).execute().getItems().get(0).getId();
+                vk.board().editComment(actor, groupId, topicId, id).message(text).execute();
+            }
+        } catch (ApiException | ClientException e) {
+            throw new RuntimeException("Failed to update VK topic", e);
+        }
+    }
+
+    // Добавление файла
+    public void addFile(String path, String filename) {
+        String directoryPath = normalizePath(path);
+        if (!fileSystem.containsKey(directoryPath)) {
+            throw new IllegalArgumentException("Directory doesn't exist: " + directoryPath);
+        }
+
+        List<String> files = fileSystem.get(directoryPath);
+        if (!files.contains(filename)) {
+            files.add(filename);
+        } else {
+            throw new IllegalArgumentException("File already exists: " + filename);
+        }
+    }
 
     public void addDirectory(String path) {
-        String directoryPath = getDirectoryPath(path);
-        String newDirName = getFolderName(path);
-        if (fileSystem.containsKey(directoryPath)) {
-            if (fileSystem.containsKey(path)) {
-                throw new IllegalArgumentException("Directory already exists");
-            }
-            fileSystem.get(directoryPath).add(newDirName);
-            fileSystem.put(path, new ArrayList<>());
-            updateTopic();
-        } else {
-            throw new IllegalArgumentException("Directory doesn't exist");
-        }
-    }
+        String normalizedPath = normalizePath(path);
 
-    public void delete(String path) {
-        String directoryPath = getDirectoryPath(path);
-        String nameToDelete = getFolderName(path);
-
-        if (fileSystem.containsKey(directoryPath)) {
-            List<String> filesAndFolders = fileSystem.get(directoryPath);
-            if (filesAndFolders.contains(nameToDelete)) {
-                filesAndFolders.remove(nameToDelete);
-                fileSystem.remove(path);
-                updateTopic();
-            } else {
-                throw new IllegalArgumentException("File or directory not found");
-            }
-        } else {
-            throw new IllegalArgumentException("Directory doesn't exist");
+        // Проверяем, существует ли директория
+        if (fileSystem.containsKey(normalizedPath)) {
+            throw new IllegalArgumentException("Directory already exists: " + normalizedPath);
         }
 
+        // Получаем родительский путь
+        String parentPath = getDirectoryPath(normalizedPath);
+
+        // Если родительская директория не существует, создаём её
+        if (!fileSystem.containsKey(parentPath)) {
+            addDirectory(parentPath);
+        }
+
+        // Создаём запись для текущей директории
+        fileSystem.put(normalizedPath, new ArrayList<>());
+    }
+
+    // Удаление файла или директории
+// Удаление файла или директории
+    public synchronized void delete(String path) {
+        String normalizedPath = normalizePath(path);
+
+        if (!fileSystem.containsKey(normalizedPath)) {
+            throw new IllegalArgumentException("Directory doesn't exist: " + normalizedPath);
+        }
+
+        List<String> subPaths = fileSystem.keySet().stream()
+                .filter(s -> s.startsWith(normalizedPath) && !normalizedPath.equals(s))
+                .toList();
+
+        for (String subPath : subPaths) {
+            fileSystem.remove(subPath);
+        }
+        fileSystem.remove(normalizedPath);
     }
 
 
-    public List<String> list(String path) {
-        return fileSystem.getOrDefault(path, new ArrayList<>());
+    // Метод для нормализации путей
+    private String normalizePath(String path) {
+        if (path == null || path.isEmpty()) {
+            return "/";
+        }
+
+        if (!path.startsWith("/")) {
+            path = "/" + path;
+        }
+
+        if (!path.endsWith("/")) {
+            path = path + "/";
+        }
+
+        return path;
     }
 
-
+    // Построение текстового представления файловой системы
     private String buildTextRepresentation() {
         StringBuilder sb = new StringBuilder();
         for (Map.Entry<String, List<String>> entry : fileSystem.entrySet()) {
-            if (entry.getKey().equals("/")) {
-                sb.append("/\n");
-            } else {
-                sb.append(entry.getKey()).append("\n");
-            }
-            for (String fileOrFolder : entry.getValue()) {
-                if (!fileOrFolder.endsWith("/")) {
-                    sb.append(entry.getKey()).append(fileOrFolder).append("\n");
-                }
-
+            sb.append(entry.getKey()).append("\n");
+            for (String file : entry.getValue()) {
+                sb.append(entry.getKey()).append(file).append("\n");
             }
         }
         return sb.toString();
     }
 
-
-    private void loadTextRepresentation(String text) {
+    // Парсинг файловой системы из текста
+    private void parseFileSystemFromText(String text) {
         fileSystem.clear();
         fileSystem.put("/", new ArrayList<>());
+
         String[] lines = text.split("\n");
         for (String line : lines) {
-            if(line.endsWith("/")) {
-                if (line.equals("/")) {
-                    continue;
-                }
-                fileSystem.put(line, new ArrayList<>());
-                String parentPath = getDirectoryPath(line);
-                String newDirName = getFolderName(line);
-                fileSystem.get(parentPath).add(newDirName);
-            } else {
-                String directoryPath = getDirectoryPath(line);
-                String fileName = getFolderName(line);
-                if(fileSystem.containsKey(directoryPath)) {
-                    fileSystem.get(directoryPath).add(fileName);
-                } else {
-                    // TODO: handle errors
-                    throw new IllegalArgumentException("Invalid file path");
-                }
+            if (line.isEmpty() || !line.contains("/")) continue;
 
+            int lastSlash = line.lastIndexOf("/");
+            String directoryPath = line.substring(0, lastSlash + 1);
+            String itemName = line.substring(lastSlash + 1);
+
+            fileSystem.putIfAbsent(directoryPath, new ArrayList<>());
+            if (!itemName.isEmpty()) {
+                fileSystem.get(directoryPath).add(itemName);
             }
         }
-    }
-
-    private void updateTopic() {
-        String text = buildTextRepresentation();
-        try {
-            if (topicId == 0) {
-                topicId = vk.board().addTopic(actor).groupId(groupId).title("FOLDERS").text(text).fromGroup(true).execute();
-            } else {
-                vk.board().editComment(actor, groupId, topicId, 0).message(text).execute();
-
-            }
-
-        } catch (ApiException | ClientException e) {
-            e.printStackTrace();
-            throw new RuntimeException("Failed to update VK topic", e);
-        }
-    }
-
-    public void loadTopic(){
-        try {
-            if(topicId == 0) {
-                var response = vk.board().getTopics(actor).groupId(groupId).count(1).execute();
-                if(response.getItems().isEmpty()){
-                    topicId = vk.board().addTopic(actor).groupId(groupId).title("FOLDERS").text("/\n").fromGroup(true).execute();
-
-                } else {
-                    topicId = response.getItems().get(0).getId();
-                    var topicResponse = vk.board().getComments(actor).groupId(groupId).topicId(Integer.valueOf(topicId)).count(1).execute();
-                    if(!topicResponse.getItems().isEmpty()) {
-                        loadTextRepresentation(topicResponse.getItems().get(0).getText());
-                    }
-                }
-            } else {
-                var topicResponse = vk.board().getComments(actor).groupId(groupId).topicId(Integer.valueOf(topicId)).count(1).execute();
-                if(!topicResponse.getItems().isEmpty()) {
-                    loadTextRepresentation(topicResponse.getItems().get(0).getText());
-                }
-            }
-        } catch (ApiException | ClientException e) {
-            throw new RuntimeException(e);
-        }
-
     }
 
     private String getDirectoryPath(String path) {
-        int lastSlash = path.lastIndexOf("/");
-        if (lastSlash <= 0) {
+        if (path.equals("/")) {
             return "/";
         }
-        return path.substring(0, lastSlash+1);
+
+        if (path.endsWith("/")) path = path.substring(0, path.length()-1);
+        int lastSlash = path.lastIndexOf("/");
+        return (lastSlash <= 0) ? "/" : path.substring(0, lastSlash+1);
     }
 
     private String getFolderName(String path) {
         int lastSlash = path.lastIndexOf("/");
-        return path.substring(lastSlash+1);
+        return path.substring(lastSlash + 1);
     }
-
 }
