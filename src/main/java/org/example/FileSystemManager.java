@@ -54,6 +54,11 @@ public class FileSystemManager {
         return this.fileSystem.keySet();
     }
 
+    public boolean isDirectoryExists(String path) {
+        path = normalizePath(path);
+        return fileSystem.containsKey(path);
+    }
+
     public Set<String> getFolders(String path) {
         final String fpath = normalizePath(path);
         return this.fileSystem.keySet().stream().filter(s -> s.startsWith(fpath) && !fpath.equals(s)).collect(Collectors.toSet());
@@ -87,26 +92,52 @@ public class FileSystemManager {
     }
 
     // Добавление файла
-    public void addFile(String path, String filename) {
+    public void addFile(String path, String filename) throws FileAlreadyExistsException, DirectoryNotFoundException {
         String directoryPath = normalizePath(path);
         if (!fileSystem.containsKey(directoryPath)) {
-            throw new IllegalArgumentException("Directory doesn't exist: " + directoryPath);
+            throw new DirectoryNotFoundException();
         }
 
         List<String> files = fileSystem.get(directoryPath);
         if (!files.contains(filename)) {
             files.add(filename);
         } else {
-            throw new IllegalArgumentException("File already exists: " + filename);
+            throw new FileAlreadyExistsException();
         }
     }
 
-    public void addDirectory(String path) {
+    public void deleteFile(String path, String filename) throws FileNotFoundException, DirectoryNotFoundException {
+        String directoryPath = normalizePath(path);
+        if (!fileSystem.containsKey(directoryPath)) {
+            throw new DirectoryNotFoundException();
+        }
+
+        List<String> files = fileSystem.get(directoryPath);
+        if (files.contains(filename)) {
+            files.remove(filename);
+        } else {
+            throw new FileNotFoundException();
+        }
+    }
+
+    static class DirectoryNotFoundException extends Throwable {
+    }
+
+    static class FileNotFoundException extends Throwable {
+    }
+
+    static class FileAlreadyExistsException extends Throwable {
+    }
+
+    static class DirectoryAlreadyExistsException extends Throwable {
+    }
+
+    public void addDirectory(String path) throws DirectoryAlreadyExistsException {
         String normalizedPath = normalizePath(path);
 
         // Проверяем, существует ли директория
         if (fileSystem.containsKey(normalizedPath)) {
-            throw new IllegalArgumentException("Directory already exists: " + normalizedPath);
+            throw new DirectoryAlreadyExistsException();
         }
 
         // Получаем родительский путь
@@ -121,13 +152,10 @@ public class FileSystemManager {
         fileSystem.put(normalizedPath, new ArrayList<>());
     }
 
-    // Удаление файла или директории
-// Удаление файла или директории
-    public synchronized void delete(String path) {
+    public synchronized void deleteFolder(String path) throws DirectoryNotFoundException {
         String normalizedPath = normalizePath(path);
-
         if (!fileSystem.containsKey(normalizedPath)) {
-            throw new IllegalArgumentException("Directory doesn't exist: " + normalizedPath);
+            throw new DirectoryNotFoundException();
         }
 
         List<String> subPaths = fileSystem.keySet().stream()
@@ -137,12 +165,13 @@ public class FileSystemManager {
         for (String subPath : subPaths) {
             fileSystem.remove(subPath);
         }
+
         fileSystem.remove(normalizedPath);
     }
 
 
     // Метод для нормализации путей
-    private String normalizePath(String path) {
+    static String normalizePath(String path) {
         if (path == null || path.isEmpty()) {
             return "/";
         }
