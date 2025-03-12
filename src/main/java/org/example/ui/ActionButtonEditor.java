@@ -83,6 +83,7 @@ class ActionButtonEditor extends DefaultCellEditor {
             if ("Folder".equals(table.getValueAt(row, 1).toString())) {
                 try {
                     fsm.deleteFolder(video);
+                    fsm.updateTopic();
                 } catch (FileSystemManager.DirectoryNotFoundException e) {
                     showMessageDialog("Error", "Folder not found:\n" + e.getMessage(), JOptionPane.ERROR_MESSAGE);
                     throw new RuntimeException(e);

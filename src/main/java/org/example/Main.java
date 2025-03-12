@@ -6,25 +6,15 @@ import com.vk.api.sdk.client.actors.UserActor;
 import com.vk.api.sdk.exceptions.ApiException;
 import com.vk.api.sdk.exceptions.ClientException;
 import com.vk.api.sdk.httpclient.HttpTransportClient;
-import com.vk.api.sdk.objects.video.VideoFull;
-import okhttp3.*;
 import org.example.managers.FileSystemManager;
 import org.example.managers.VideoLoaderManager;
 import org.example.ui.MainWindow;
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
 
 import javax.swing.*;
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.IOException;
-import java.io.InputStreamReader;
 import java.util.*;
-import java.util.List;
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import static java.lang.System.out;
 
@@ -82,7 +72,6 @@ public class Main {
         UserActor actor = new UserActor(198248840L, token);
         fsm = new FileSystemManager(vk, actor, groupId);
         vlm = new VideoLoaderManager(vk, actor, groupId);
-        ExecutorService executorService = Executors.newFixedThreadPool(MAX_CONCURRENT_UPLOADS);
         fsm.syncWithVk();
 
         if (gui) {

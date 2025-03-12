@@ -3,21 +3,27 @@ package org.example.ui;
 
 import org.example.managers.FileSystemManager;
 import org.example.managers.VideoLoaderManager;
-import org.example.objects.FileNode;
 
 import javax.swing.*;
 import javax.swing.border.TitledBorder;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.plaf.FontUIResource;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.JTableHeader;
-import javax.swing.table.TableCellRenderer;
 import javax.swing.text.StyleContext;
-import javax.swing.tree.DefaultMutableTreeNode;
 import java.awt.*;
 import java.awt.event.*;
+import java.io.File;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
+import static java.lang.System.out;
 
 public class MainWindow extends JDialog {
     private JPanel contentPane;
@@ -42,7 +48,7 @@ public class MainWindow extends JDialog {
         buttonOK.setBorderPainted(false);
         buttonOK.setFocusPainted(false);
         buttonOK.setOpaque(false);
-        buttonOK.addActionListener(e -> onOK());
+        buttonOK.addActionListener(e -> onAddFolder());
 
 
         buttonCancel.setContentAreaFilled(false);
@@ -51,7 +57,7 @@ public class MainWindow extends JDialog {
         buttonCancel.setOpaque(false);
         buttonCancel.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
-                onCancel();
+                onAddVideo();
             }
         });
 
@@ -59,14 +65,14 @@ public class MainWindow extends JDialog {
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
         addWindowListener(new WindowAdapter() {
             public void windowClosing(WindowEvent e) {
-                onCancel();
+                onAddVideo();
             }
         });
 
         // call onCancel() on ESCAPE
         contentPane.registerKeyboardAction(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
-                onCancel();
+                onAddVideo();
             }
         }, KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT);
 
@@ -92,8 +98,6 @@ public class MainWindow extends JDialog {
                 new JCheckBox(),
                 vlm,
                 fsm));
-
-
 
         fileTable.setShowGrid(false);
         fileTable.setBorder(BorderFactory.createEmptyBorder());
@@ -159,7 +163,17 @@ public class MainWindow extends JDialog {
             }
 
             for (String folder : folders) {
-                tableModel.addRow(new Object[]{folder.replaceAll("/", ""), "Folder", ""});
+
+                String s = folder.substring(currentDirectory.length());
+
+                int count = 0;
+                for (char element : s.toCharArray()) {
+                    if (element == '/') count++;
+                }
+                if (count <= 1) {
+                    s = s.substring(0, s.indexOf("/"));
+                    tableModel.addRow(new Object[]{s, "Folder", ""});
+                }
             }
 
             for (String file : files) {
@@ -170,14 +184,81 @@ public class MainWindow extends JDialog {
         }
     }
 
-    private void onOK() {
-        // add your code here
-        //dispose();
+    private void onAddFolder() {
+        String folderName = JOptionPane.showInputDialog(null, "Enter folder name:", "Create Folder", JOptionPane.QUESTION_MESSAGE);
+
+        if (folderName != null) {
+            if (folderName.matches("[0-9a-zA-Zа-яА-Я_-]+")) {
+                try {
+                    fsm.addDirectory(currentDirectory + folderName);
+                    tableModel.addRow(new Object[]{folderName, "Folder", ""});
+                    fsm.updateTopic();
+                } catch (FileSystemManager.DirectoryAlreadyExistsException e) {
+                    JOptionPane.showMessageDialog(null, "Directory already exists.",
+                            "Error", JOptionPane.ERROR_MESSAGE);
+                    throw new RuntimeException(e);
+                }
+
+            } else {
+                JOptionPane.showMessageDialog(null, "Invalid folder name! Use only letters, numbers, '_', and '-'.",
+                        "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        } else {
+            System.out.println("Folder creation canceled.");
+        }
     }
 
-    private void onCancel() {
-        // add your code here if necessary
-        //dispose();
+
+    private void onAddVideo() {
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setDialogTitle("Select Video File(s)");
+        fileChooser.setMultiSelectionEnabled(true); // Разрешаем выбирать несколько файлов
+
+        FileNameExtensionFilter filter = new FileNameExtensionFilter(
+                "Video Files (*.mp4, *.avi, *.mkv, *.mov, *.wmv, *.flv, *.webm, *.mpeg, *.3gp, *.ogg)",
+                "mp4", "avi", "mkv", "mov", "wmv", "flv", "webm", "mpeg", "3gp", "ogg"
+        );
+        fileChooser.setFileFilter(filter);
+
+        int returnValue = fileChooser.showOpenDialog(null);
+
+        if (returnValue == JFileChooser.APPROVE_OPTION) {
+            File[] selectedFiles = fileChooser.getSelectedFiles();
+
+            out.println("Selected " + selectedFiles.length);
+
+            // Массив для хранения индексов строк, добавленных для каждого файла
+            int[] rowIndices = new int[selectedFiles.length];
+
+            for (int i = 0; i < selectedFiles.length; i++) {
+                File file = selectedFiles[i];
+                // Добавляем строку в таблицу и сохраняем её индекс
+                tableModel.addRow(new Object[]{file.getName(), "Uploading: 0%", ""});
+                rowIndices[i] = tableModel.getRowCount() - 1; // Индекс последней добавленной строки
+
+                ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+                int finalI = i;
+                scheduler.scheduleAtFixedRate(() -> {
+                    int progress = vlm.getProgress(currentDirectory, file.getName());
+                    //out.println("  - " + file.getName() + " " + progress + "%");
+
+                    // Обновляем статус в таблице
+                    tableModel.setValueAt("Uploading: " + progress + "%", rowIndices[finalI], 1);
+
+                    if (progress == 100 || progress == -1) {
+                        if (progress == 100) {
+                            refreshTable();
+                        } else if (progress == -1) {
+                            tableModel.setValueAt("Upload failed!", rowIndices[finalI], 1);
+                        }
+                        scheduler.shutdown();
+                    }
+                }, 0, 500, TimeUnit.MILLISECONDS);
+            }
+            vlm.loadVideo(currentDirectory, Arrays.stream(selectedFiles).toList());
+        } else {
+            System.out.println("File selection canceled.");
+        }
     }
 
     public static String getCurrentDirectory() {
@@ -287,5 +368,4 @@ public class MainWindow extends JDialog {
     public JComponent $$$getRootComponent$$$() {
         return contentPane;
     }
-
 }

@@ -8,6 +8,9 @@ import com.vk.api.sdk.objects.video.Video;
 import com.vk.api.sdk.objects.video.VideoFull;
 import com.vk.api.sdk.objects.video.responses.GetResponse;
 import okhttp3.*;
+import okio.BufferedSink;
+import okio.BufferedSource;
+import okio.Okio;
 import org.example.Main;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -18,7 +21,10 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.URI;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -32,15 +38,24 @@ public class VideoLoaderManager {
     private final Long groupId;
     ExecutorService executorService = Executors.newFixedThreadPool(Main.MAX_CONCURRENT_UPLOADS);
 
+    private static final ConcurrentHashMap<String, Integer> progressMap = new ConcurrentHashMap<>();
+
+
     public VideoLoaderManager(VkApiClient vk, UserActor actor, Long groupId) {
         this.vk = vk;
         this.actor = actor;
         this.groupId = groupId;
     }
 
+    public int getProgress(String directory, String video) {
+        return progressMap.getOrDefault(directory + video, 0);
+    }
+
     public void loadVideo(String currDirectory, List<File> files) {
         AtomicInteger id = new AtomicInteger();
         final int size = files.size();
+        long startTime = System.currentTimeMillis();
+
         files.forEach(video -> {
             executorService.submit(() -> {
                 try {
@@ -51,26 +66,32 @@ public class VideoLoaderManager {
                             .description(getMetadata(video))
                             .execute().getUploadUrl().toString();
                     out.printf("Sending video %s...%n", video.getName());
-                    uploadVideo(str, video.getAbsolutePath());
+                    uploadVideo(str, video.getAbsolutePath(), currDirectory + video.getName());
+
+                    progressMap.put(currDirectory + video.getName(), 100);
+
                     Main.getFileSystemManager().addFile(currDirectory, video.getName());
                     out.printf("Video successful loaded: %s\n", video.getName());
 
                     if (id.get() == size) {
-                        out.println("All videos loaded");
+                        out.println("All videos loaded with " + (System.currentTimeMillis() - startTime) + "ms");
                         Main.getFileSystemManager().updateTopic();
                         Main.getFileSystemManager().syncWithVk();
                     }
 
                 } catch (ApiException | ClientException | IOException e) {
+                    progressMap.put(currDirectory + video.getName(), -1);
                     out.println(e.getMessage());
                     throw new RuntimeException(e);
                 } catch (FileSystemManager.FileAlreadyExistsException |
                          FileSystemManager.DirectoryNotFoundException e) {
+                    out.println(e.getMessage());
+                    progressMap.put(currDirectory + video.getName(), -1);
                     throw new RuntimeException(e);
                 }
             });
         });
-        executorService.shutdown();
+       /*executorService.shutdown();
 
         try {
             // Ожидание завершения всех задач
@@ -79,7 +100,7 @@ public class VideoLoaderManager {
             }
         } catch (InterruptedException e) {
             executorService.shutdownNow();
-        }
+        }*/
     }
 
 
@@ -231,18 +252,15 @@ public class VideoLoaderManager {
             return -1;
         }
     }
-
-    private static void uploadVideo(String uploadUrl, String videoFilePath) throws IOException {
+    public static void uploadVideo(String uploadUrl, String videoFilePath, String fullname) throws IOException {
         OkHttpClient client = new OkHttpClient();
 
         File videoFile = new File(videoFilePath);
-        RequestBody fileBody = RequestBody.create(MediaType.parse("application/octet-stream"), videoFile);
+        RequestBody fileBody = new ProgressRequestBody(videoFile, "application/octet-stream", fullname);
+
         RequestBody requestBody = new MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
-                .addPart(
-                        Headers.of("Content-Disposition", "form-data; name=\"file\"; filename=\"" + videoFile.getName() + "\""),
-                        fileBody
-                )
+                .addFormDataPart("file", videoFile.getName(), fileBody)
                 .build();
 
         Request request = new Request.Builder()
@@ -252,9 +270,58 @@ public class VideoLoaderManager {
 
         try (Response response = client.newCall(request).execute()) {
             if (!response.isSuccessful()) {
+                System.out.println("Upload failed for " + videoFile.getName() + " " + response);
                 throw new IOException("Unexpected code " + response);
             }
+            System.out.println("Upload complete for " + videoFile.getName());
         }
     }
 
+
+    static class ProgressRequestBody extends RequestBody {
+        private final File file;
+        private final String contentType;
+        private final String fullname;
+
+        public ProgressRequestBody(File file, String contentType, String fullname) {
+            this.file = file;
+            this.contentType = contentType;
+            this.fullname = fullname;
+        }
+
+        @Override
+        public MediaType contentType() {
+            return MediaType.parse(contentType);
+        }
+
+        @Override
+        public long contentLength() {
+            return file.length();
+        }
+
+        @Override
+        public void writeTo(BufferedSink sink) throws IOException {
+            long fileLength = file.length();
+            long totalBytesRead = 0;
+            int bufferSize = 8192;
+            byte[] buffer = new byte[bufferSize];
+
+            long lastProgressUpdate = System.nanoTime();
+
+            try (BufferedSource source = Okio.buffer(Okio.source(file))) {
+                long bytesRead;
+                while ((bytesRead = source.read(buffer)) != -1) {
+                    sink.write(buffer, 0, (int) bytesRead);
+                    totalBytesRead += bytesRead;
+
+                    long now = System.nanoTime();
+                    if ((now - lastProgressUpdate) > 500_000_000) { // Обновлять раз в 500 мс
+                        int progress = (int) ((totalBytesRead * 100) / fileLength);
+                        progressMap.put(fullname, progress);
+                        lastProgressUpdate = now;
+                    }
+                }
+            }
+        }
+    }
 }
