@@ -6,161 +6,284 @@ import com.vk.api.sdk.client.actors.UserActor;
 import com.vk.api.sdk.exceptions.ApiException;
 import com.vk.api.sdk.exceptions.ClientException;
 import com.vk.api.sdk.httpclient.HttpTransportClient;
+import com.vk.api.sdk.objects.video.VideoFull;
 import okhttp3.*;
+import org.example.managers.FileSystemManager;
+import org.example.managers.VideoLoaderManager;
+import org.example.ui.MainWindow;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import javax.swing.*;
-import java.awt.*;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.util.ArrayList;
+import java.util.*;
 import java.util.List;
-import java.util.Objects;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import static java.lang.System.out;
 
 public class Main {
 
-    private static final long GROUP_ID = 227898147;
-    private static final String token = "vk1.a.LnuaYLZ64A0pbow_txcAatzNEhbYrVn_o7EZDTIdARwUPYgfo1M-Qq9lavaI4SiXiUUXwfFmDDd11ZwlMt2wTVCuU-QXbvc3SuMTEzT-ajR0yQQ_TV0bf_OFWypYiI6KeZH-g8hurnlOy3C3PTOq9MlCDLcEWpAeCSfwmXvyE_LnyC4lHLKb9IXkZ6cAYQT0";
+    private static long groupId = 227898147;
+    private static boolean gui = true;
+    private static String token = "---";
+    public static int MAX_CONCURRENT_UPLOADS = 5;
 
-    private static final PostgresManager db = new PostgresManager("jdbc:postgresql://localhost:5432/videos", "postgres", "0402");;
+    private static String currDirectory = "/";
 
-    public static void main(String[] args) {
-        TransportClient transportClient = new HttpTransportClient();
-        VkApiClient vk = new VkApiClient(transportClient);
+    private static FileSystemManager fsm = null;
+    private static VideoLoaderManager vlm = null;
 
-        // Код, чтобы получить токен
-/*        try {
-            askToken("https://oauth.vk.com/authorize?client_id=52502099&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=friends,video&response_type=token&v=5.59");
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        } catch (URISyntaxException e) {
-            throw new RuntimeException(e);
-        }*/
+    public static void main(String[] serverargs) {
+        token = "https://oauth.vk.com/blank.html#access_token=vk1.a.VpV3kiNEuaHDrxOqQv5rE7JsITABmY-M7vmdiHIERia29TU_ITrN40WTM6D-232IzmYKKhaPqBrFPZJUmU_HHuc3LTFH4aM4T3LNkvnyShoR4v_n6yxorOJehqiQJDJWRk60gog4X_ZjMjitXiXDoQ5V3x-Jb7wS6VQLdzVjKJ6B_BSqVZq9XVnrkhGM3ePC_Nvs1ibB3Wl35PNY31W5Jw&expires_in=86400&user_id=198248840";
+        groupId = 227898147L;
+        //token = System.getenv("VK_TOKEN");
 
-        File dir = new File("src/main/resources/vkkiller");
-        List<File> lst = new ArrayList<File>();
-        for (File file : Objects.requireNonNull(dir.listFiles())) {
-            if (file.isFile())
-                lst.add(file);
+        if (token == null) {
+            out.println("Token not found.");
+            return;
+        }
+        if (token.contains("access_token=")) {
+            token = token.substring(token.indexOf("access_token=") + 13);
+            if (token.contains("&")) {
+                token = token.substring(0, token.indexOf("&"));
+            }
         }
 
+        /*try {
+            groupId = Long.parseLong(System.getenv("VK_GROUP_ID"));
+        } catch (NumberFormatException e) {
+            out.println("Group ID is invalid.");
+            return;
+        }*/
+
+        try {
+            MAX_CONCURRENT_UPLOADS = Integer.parseInt(System.getenv("MAX_CONCURRENT_UPLOADS"));
+        } catch (NumberFormatException e) {
+            System.out.println("Error! max_concurrent cannot be lower than 1. Using default value: 5");
+            MAX_CONCURRENT_UPLOADS = 5;
+        }
+
+        gui = true;
+        //gui = !Boolean.parseBoolean(System.getenv("NOGUI"));
+
+        out.println("VKVideoUploader started. Use \"help\" for list of commands.");
+
+        /**TODO: check token*/
+
+        TransportClient transportClient = new HttpTransportClient();
+        VkApiClient vk = new VkApiClient(transportClient);
         UserActor actor = new UserActor(198248840L, token);
-        lst.forEach(video -> {
-            Thread t = new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        String str = vk.video().save(actor)
-                                .groupId(GROUP_ID)
-                                .execute().getUploadUrl().toString();
-                        out.printf("Получили ссылку для загрузки видео %s. Начинаю загрузку...%n\n", video.getName());
-                        uploadVideo(str, video.getAbsolutePath());
-                        out.printf("Видео успешно загружено: %s\n", video.getName());
-                        saveMetadata(video);
-                    } catch (ApiException | ClientException | IOException e) {
-                        out.println(e.getMessage());
-                        throw new RuntimeException(e);
+        fsm = new FileSystemManager(vk, actor, groupId);
+        vlm = new VideoLoaderManager(vk, actor, groupId);
+        ExecutorService executorService = Executors.newFixedThreadPool(MAX_CONCURRENT_UPLOADS);
+        fsm.syncWithVk();
+
+        if (gui) {
+            System.setProperty("apple.awt.application.appearance", "NSAppearanceNameVibrantDark");
+            SwingUtilities.invokeLater(() -> {
+                MainWindow dialog = new MainWindow(fsm, vlm);
+                dialog.pack();
+                dialog.setLocationRelativeTo(null);
+                dialog.setVisible(true);
+                System.exit(0);
+            });
+        }
+
+        Scanner scanner = new Scanner(System.in);
+
+        while (true) {
+            out.print(currDirectory + " > ");
+            String[] cmdfull = scanner.nextLine().trim().split(" ");
+            String cmd = cmdfull[0];
+            String[] args = Arrays.copyOfRange(cmdfull, 1, cmdfull.length);
+
+            if (cmd.equalsIgnoreCase("exit")) {
+                out.println("VKVideoUploader stopped.");
+                break;
+            }
+            if (cmd.equalsIgnoreCase("help")) {
+                out.println("Commands:");
+                out.println(" exit - stop server");
+                out.println(" sync - sync with VK");
+                out.println(" ls - check files and subfolders in current folder.");
+                out.println(" mkdir <name> - create folder");
+                out.println(" cd <path> - go to path folder");
+                out.println(" rmdir <name> - remove folder with all files and subfolders. WARNING! It will remove all video files in folder and subfolders!");
+                out.println(" rmfile <name> - remove file in current directory.");
+                out.println(" addvideo <path> - export videos from local path to VK. It can be folder with files or single file. Use -meta to save meta to comment.");
+                continue;
+            }
+            if (cmd.equalsIgnoreCase("ls")) {
+                fsm.syncWithVk();
+                //TODO: учесть, что папка может быть удалена в момент использования
+                out.println("Files and folders in " + currDirectory);
+                fsm.getFolders(currDirectory).forEach(s -> {
+                    s = s.substring(currDirectory.length());
+
+                    int count=0;
+                    for (char element : s.toCharArray()) {
+                        if (element == '/') count++;
+                    }
+                    if (count <= 1) {
+                        s = s.substring(0, s.indexOf("/"));
+                        out.println(s);
+                    }
+                });
+                fsm.getFiles(currDirectory).forEach(out::println);
+                continue;
+            }
+            if (cmd.equalsIgnoreCase("sync")) {
+                fsm.syncWithVk();
+                continue;
+            }
+            if (cmd.equalsIgnoreCase("cd")) {
+                if (args.length != 1) {
+                    out.println("Usage: cd <path>");
+                    continue;
+                }
+
+                String targetPath = args[0];
+                if (targetPath.equals("..")) {
+                    // Переход на уровень выше
+                    if (!currDirectory.equals("/")) {
+                        currDirectory = currDirectory.substring(0, currDirectory.lastIndexOf("/"));
+                        currDirectory = currDirectory.substring(0, currDirectory.lastIndexOf("/")) + '/';
+                        if (currDirectory.isEmpty()) {
+                            currDirectory = "/";
+                        }
+                    }
+                } else {
+                    // Переход в указанную директорию
+                    String newPath;
+                    if (targetPath.startsWith("/")) {
+                        // Абсолютный путь
+                        newPath = targetPath;
+                    } else {
+                        // Относительный путь
+                        newPath = currDirectory.endsWith("/") ? currDirectory + targetPath : currDirectory + "/" + targetPath;
+                    }
+
+                    newPath = FileSystemManager.normalizePath(newPath);
+
+                    if (fsm.isDirectoryExists(newPath)) {
+                        currDirectory = newPath;
+                    } else {
+                        out.println("Directory not found: " + targetPath);
                     }
                 }
-            });
-            t.start();
 
-        });
-    }
+                continue;
+            }
 
+            if (cmd.equalsIgnoreCase("mkdir")) {
+                if (args.length != 1) {
+                    out.println("Usage: mkdir <folder_name>");
+                    continue;
+                }
+                String foldername = args[0];
+                if (!foldername.matches("[0-9a-zA-Zа-яА-Я_-]+")) {
+                    out.println("Error. Allowed characters: 0-9, a-z, A-Z, а-я, А-Я, '_', '-'");
+                    continue;
+                }
+                fsm.syncWithVk();
+                try {
+                    fsm.addDirectory(currDirectory + foldername);
+                    fsm.updateTopic();
+                    out.println("Folder created.");
+                } catch (FileSystemManager.DirectoryAlreadyExistsException e) {
+                    out.println("Folder already exists.");
+                }
+                continue;
+            }
+            if (cmd.equalsIgnoreCase("rmdir")) {
+                if (args.length != 1) {
+                    out.println("Usage: rmdir <folder_name>");
+                    continue;
+                }
+                String foldername = args[0];
+                if (!foldername.matches("[0-9a-zA-Zа-яА-Я_-]+")) {
+                    out.println("Error. Allowed characters: 0-9, a-z, A-Z, а-я, А-Я, '_', '-'");
+                    continue;
+                }
+                fsm.syncWithVk();
+                try {
+                    fsm.deleteFolder(currDirectory + foldername);
+                    fsm.updateTopic();
 
-    public static String askToken(String link) throws IOException, URISyntaxException {
-        //Opens link in default browser
-        Desktop.getDesktop().browse(new URI(link));
+                    out.println("Loading");
+                    vlm.deleteVideosFromFolder(currDirectory + foldername);
+                    out.println("Files removed.");
+                    continue;
+                } catch (FileSystemManager.DirectoryNotFoundException e) {
+                    out.println("Folder not found.");
+                } catch (ClientException e) {
+                    throw new RuntimeException(e);
+                } catch (ApiException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+            if (cmd.equalsIgnoreCase("rmfile")) {
+                if (args.length != 1) {
+                    out.println("Usage: rmfile <name>");
+                    continue;
+                }
+                String filename = args[0];
+                if (!filename.matches("[0-9a-zA-Zа-яА-Я._-]+")) {
+                    out.println("Error. Allowed characters: 0-9, a-z, A-Z, а-я, А-Я, '_', '-', '.'");
+                    continue;
+                }
+                fsm.syncWithVk();
+                try {
+                    fsm.deleteFile(currDirectory, filename);
+                    fsm.updateTopic();
+                    out.println("Loading");
+                    fsm.deleteFile(currDirectory, filename);
+                    out.println("File removed.");
+                    continue;
+                } catch (FileSystemManager.FileNotFoundException e) {
+                    out.println("File not found.");
+                    continue;
+                } catch (FileSystemManager.DirectoryNotFoundException e) {
+                    out.println("Directory not found.");
+                    continue;
+                }
+            }
+            if (cmd.equalsIgnoreCase("addvideo")) {
+                if (args.length == 0) {
+                    out.println("Usage: addvideo <path>");
+                    continue;
+                }
 
-        //Asks user to input token from browser manually
-        return JOptionPane.showInputDialog("Please input access_token param from browser: ");
-    }
-
-    public static void uploadVideo(String uploadUrl, String videoFilePath) throws IOException {
-        OkHttpClient client = new OkHttpClient();
-
-        File videoFile = new File(videoFilePath);
-        RequestBody fileBody = RequestBody.create(MediaType.parse("application/octet-stream"), videoFile);
-        RequestBody requestBody = new MultipartBody.Builder()
-                .setType(MultipartBody.FORM)
-                .addPart(
-                        Headers.of("Content-Disposition", "form-data; name=\"file\"; filename=\"" + videoFile.getName() + "\""),
-                        fileBody
-                )
-                .build();
-
-        Request request = new Request.Builder()
-                .url(uploadUrl)
-                .post(requestBody)
-                .build();
-
-        try (Response response = client.newCall(request).execute()) {
-            if (!response.isSuccessful()) {
-                throw new IOException("Unexpected code " + response);
+                File dir = new File(args[0]);
+                List<File> lst = new ArrayList<File>();
+                if (dir.isDirectory()) {
+                    for (File file : Objects.requireNonNull(dir.listFiles())) {
+                        if (file.isFile())
+                            lst.add(file);
+                    }
+                } else {
+                    lst.add(dir);
+                }
+                vlm.loadVideo(currDirectory, lst);
+            }
+            else {
+                out.println("Command not found.");
             }
         }
     }
 
-    private static void saveMetadata(File video) {
-        out.println("Video metadata:");
-        out.println("  Name: " + video.getName());
-        out.println("  Path: " + video.getAbsolutePath());
-        out.println("  Size: " + video.length() + " bytes");
-        out.println("  Last modified: " + new java.util.Date(video.lastModified()));
-        out.println("  Duration (in seconds): " + getVideoDuration(video));
-
-        try {
-            Process process = Runtime.getRuntime().exec("ffprobe -v error -select_streams v:0 -show_entries stream=codec_type,codec_name,width,height,bit_rate,profile -of json " + video.getAbsolutePath());
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            String jsonOutput = reader.lines().collect(Collectors.joining("\n"));
-            reader.close();
-
-            JSONObject jsonObject = new JSONObject(jsonOutput);
-            JSONArray streams = jsonObject.getJSONArray("streams");
-            JSONObject videoStream = streams.getJSONObject(0);
-
-            out.println("  Codec type: " + videoStream.getString("codec_type"));
-            out.println("  Codec name: " + videoStream.getString("codec_name"));
-            out.println("  Resolution: " + videoStream.getInt("width") + "x" + videoStream.getInt("height"));
-            out.println("  Bitrate: " + videoStream.getInt("bit_rate") + " kb/s");
-            out.println("  Profile: " + videoStream.getString("profile"));
-
-            db.add(true,
-                    video.getName(),
-                    video.length(),
-                    getVideoDuration(video),
-                    videoStream.getString("codec_type"),
-                    videoStream.getInt("width") + "x" + videoStream.getInt("height"),
-                    videoStream.getInt("bit_rate"),
-                    videoStream.getString("profile"));
-
-        } catch (IOException | JSONException e) {
-            out.println("Error getting additional video metadata: " + e.getMessage());
-        }
-
-        out.println("-------------------------------");
+    public static FileSystemManager getFileSystemManager() {
+        return fsm;
     }
 
-    private static float getVideoDuration(File video) {
-        try {
-            Process process = Runtime.getRuntime().exec("ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 " + video.getAbsolutePath());
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            String durationStr = reader.readLine();
-            reader.close();
-            return Float.parseFloat(durationStr);
-        } catch (IOException e) {
-            out.println("Error getting video duration: " + e.getMessage());
-            return -1;
-        }
+    public static VideoLoaderManager getVideoLoaderManager() {
+        return vlm;
     }
 }
