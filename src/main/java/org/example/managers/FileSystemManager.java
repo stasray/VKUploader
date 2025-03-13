@@ -25,28 +25,24 @@ public class FileSystemManager {
     }
 
     // Метод для синхронизации состояния fileSystem с реальным содержимым топика
-    public void syncWithVk() {
-        try {
-            List<Topic> topics = vk.board().getTopics(actor, groupId).execute().getItems();
+    public void syncWithVk() throws ClientException, ApiException {
+        List<Topic> topics = vk.board().getTopics(actor, groupId).execute().getItems();
 
-            // Находим топик "FOLDERS"
-            Optional<Topic> topicOptional = topics.stream()
-                    .filter(topic -> "FOLDERS".equals(topic.getTitle()))
-                    .findFirst();
+        // Находим топик "FOLDERS"
+        Optional<Topic> topicOptional = topics.stream()
+                .filter(topic -> "FOLDERS".equals(topic.getTitle()))
+                .findFirst();
 
-            if (topicOptional.isPresent()) {
-                topicId = topicOptional.get().getId();
-                String text = vk.board().getComments(actor, groupId, topicId).execute().getItems().get(0).getText();
+        if (topicOptional.isPresent()) {
+            topicId = topicOptional.get().getId();
+            String text = vk.board().getComments(actor, groupId, topicId).execute().getItems().get(0).getText();
 
-                // Обновляем fileSystem из текста
-                parseFileSystemFromText(text);
-            } else {
-                topicId = 0; // Сбрасываем topicId, если топик не найден
-                fileSystem.clear();
-                fileSystem.put("/", new ArrayList<>()); // Корневая директория
-            }
-        } catch (ApiException | ClientException e) {
-            throw new RuntimeException("Failed to sync with VK", e);
+            // Обновляем fileSystem из текста
+            parseFileSystemFromText(text);
+        } else {
+            topicId = 0; // Сбрасываем topicId, если топик не найден
+            fileSystem.clear();
+            fileSystem.put("/", new ArrayList<>()); // Корневая директория
         }
     }
 
