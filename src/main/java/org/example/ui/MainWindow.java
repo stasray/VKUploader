@@ -1,6 +1,10 @@
 package org.example.ui;
 
 
+import com.vk.api.sdk.exceptions.ApiException;
+import com.vk.api.sdk.exceptions.ClientException;
+import org.example.Utils;
+import org.example.exceptions.DirectoryAlreadyExistsException;
 import org.example.managers.FileSystemManager;
 import org.example.managers.VideoLoaderManager;
 
@@ -14,16 +18,11 @@ import javax.swing.text.StyleContext;
 import java.awt.*;
 import java.awt.event.*;
 import java.io.File;
-import java.util.Arrays;
+import java.util.*;
 import java.util.List;
-import java.util.Locale;
-import java.util.Set;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-
-import static java.lang.System.out;
 
 public class MainWindow extends JDialog {
     private JPanel contentPane;
@@ -33,8 +32,8 @@ public class MainWindow extends JDialog {
     private JLabel currentDirectoryLabel;
     private static JTable fileTable;
     private static DefaultTableModel tableModel;
-    private FileSystemManager fsm;
-    private VideoLoaderManager vlm;
+    private final FileSystemManager fsm;
+    private final VideoLoaderManager vlm;
     private static String currentDirectory = "/";
 
     public MainWindow(FileSystemManager fsm, VideoLoaderManager vlm) {
@@ -118,6 +117,12 @@ public class MainWindow extends JDialog {
             @Override
             public void mouseClicked(MouseEvent e) {
                 int row = fileTable.getSelectedRow();
+                int column = fileTable.getSelectedColumn();
+
+                if (row == -1 || column == -1) {
+                    return;
+                }
+
                 String fileName = (String) tableModel.getValueAt(row, 0);
                 String fileType = (String) tableModel.getValueAt(row, 1);
 
@@ -127,11 +132,12 @@ public class MainWindow extends JDialog {
                         int lastSlashIndex = currentDirectory.lastIndexOf('/');
                         if (lastSlashIndex > 0) {
                             currentDirectory = currentDirectory.substring(0, lastSlashIndex);
+                            currentDirectory = Utils.normalizePath(currentDirectory);
                         } else {
                             currentDirectory = "/";
                         }
-                        refreshTable();
                     }
+                    refreshTable();
                 }
 
                 if (fileType.equals("Folder")) {
@@ -146,8 +152,13 @@ public class MainWindow extends JDialog {
         tableScrollPane.getViewport().setBackground(new Color(42, 42, 48));
         panelMain.setLayout(new BorderLayout());
         panelMain.add(tableScrollPane, BorderLayout.CENTER);
-
         refreshTable();
+        startRefresher();
+    }
+
+    private void startRefresher() {
+        ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+        scheduler.scheduleAtFixedRate(this::refreshTable, 0, 3000, TimeUnit.MILLISECONDS);
     }
 
     private void refreshTable() {
@@ -179,6 +190,17 @@ public class MainWindow extends JDialog {
             for (String file : files) {
                 tableModel.addRow(new Object[]{file.replaceAll("/", ""), "File", ""});
             }
+            Set<Map.Entry<String, Integer>> progresses = vlm.getProgresses(currentDirectory).entrySet();
+            for (Map.Entry<String, Integer> entry : progresses) {
+                if (entry.getValue() > 0 && entry.getValue() < 100) {
+                    tableModel.addRow(new Object[]{entry.getKey(), "Uploading: " + entry.getValue() + "%", ""});
+                } else if (entry.getValue() == 0) {
+                    tableModel.addRow(new Object[]{entry.getKey(), "Waiting...", ""});
+                } else if (entry.getValue() == -1) {
+                    tableModel.addRow(new Object[]{entry.getKey(), "Upload failed!", ""});
+                }
+
+            }
         } catch (Exception e) {
             e.printStackTrace(); // Можно обработать исключения
         }
@@ -193,10 +215,14 @@ public class MainWindow extends JDialog {
                     fsm.addDirectory(currentDirectory + folderName);
                     tableModel.addRow(new Object[]{folderName, "Folder", ""});
                     fsm.updateTopic();
-                } catch (FileSystemManager.DirectoryAlreadyExistsException e) {
+                } catch (DirectoryAlreadyExistsException e) {
                     JOptionPane.showMessageDialog(null, "Directory already exists.",
                             "Error", JOptionPane.ERROR_MESSAGE);
                     throw new RuntimeException(e);
+                } catch (ClientException e) {
+                    JOptionPane.showMessageDialog(null, "Connection error", "Check your internet connection and try again.", JOptionPane.ERROR_MESSAGE);
+                } catch (ApiException e) {
+                    JOptionPane.showMessageDialog(null, "Api error", "Check your token and try again.", JOptionPane.ERROR_MESSAGE);
                 }
 
             } else {
@@ -224,38 +250,7 @@ public class MainWindow extends JDialog {
 
         if (returnValue == JFileChooser.APPROVE_OPTION) {
             File[] selectedFiles = fileChooser.getSelectedFiles();
-
-            out.println("Selected " + selectedFiles.length);
-
-            // Массив для хранения индексов строк, добавленных для каждого файла
-            int[] rowIndices = new int[selectedFiles.length];
-
-            for (int i = 0; i < selectedFiles.length; i++) {
-                File file = selectedFiles[i];
-                // Добавляем строку в таблицу и сохраняем её индекс
-                tableModel.addRow(new Object[]{file.getName(), "Uploading: 0%", ""});
-                rowIndices[i] = tableModel.getRowCount() - 1; // Индекс последней добавленной строки
-
-                ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
-                int finalI = i;
-                scheduler.scheduleAtFixedRate(() -> {
-                    int progress = vlm.getProgress(currentDirectory, file.getName());
-                    //out.println("  - " + file.getName() + " " + progress + "%");
-
-                    // Обновляем статус в таблице
-                    tableModel.setValueAt("Uploading: " + progress + "%", rowIndices[finalI], 1);
-
-                    if (progress == 100 || progress == -1) {
-                        if (progress == 100) {
-                            refreshTable();
-                        } else if (progress == -1) {
-                            tableModel.setValueAt("Upload failed!", rowIndices[finalI], 1);
-                        }
-                        scheduler.shutdown();
-                    }
-                }, 0, 500, TimeUnit.MILLISECONDS);
-            }
-            vlm.loadVideo(currentDirectory, Arrays.stream(selectedFiles).toList());
+            vlm.loadVideo(currentDirectory, Arrays.stream(selectedFiles).toList(), fsm);
         } else {
             System.out.println("File selection canceled.");
         }
@@ -368,4 +363,5 @@ public class MainWindow extends JDialog {
     public JComponent $$$getRootComponent$$$() {
         return contentPane;
     }
+
 }

@@ -3,13 +3,18 @@ package org.example.ui;
 import com.vk.api.sdk.exceptions.ApiException;
 import com.vk.api.sdk.exceptions.ClientException;
 import org.example.Utils;
+import org.example.exceptions.DirectoryNotFoundException;
+import org.example.exceptions.FileNotFoundException;
+import org.example.managers.FileSystemAlbumsManager;
 import org.example.managers.FileSystemManager;
+import org.example.managers.FileSystemTopicsManager;
 import org.example.managers.VideoLoaderManager;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
-import java.awt.event.ActionEvent;
+import java.awt.datatransfer.Clipboard;
+import java.awt.datatransfer.StringSelection;
 import java.awt.event.ActionListener;
 import java.net.URI;
 
@@ -49,11 +54,12 @@ class ActionButtonEditor extends DefaultCellEditor {
 
         panel.removeAll();
 
-        if (!"-".equals(table.getValueAt(row, 1)))
+        if (!"-".equals(table.getValueAt(row, 1))) {
+            panel.add(createButton(linkIcon, e -> linkAction()));
             panel.add(createButton(deleteIcon, e -> deleteAction()));
+        }
         if ("File".equals(table.getValueAt(row, 1))) {
             panel.add(createButton(infoIcon, e -> infoAction()));
-            panel.add(createButton(linkIcon, e -> linkAction()));
         }
 
         return panel;
@@ -84,23 +90,25 @@ class ActionButtonEditor extends DefaultCellEditor {
                 try {
                     fsm.deleteFolder(video);
                     fsm.updateTopic();
-                } catch (FileSystemManager.DirectoryNotFoundException e) {
+                    ((DefaultTableModel) table.getModel()).removeRow(row);
+                    table.clearSelection();
+                    table.editingStopped(null);
+                } catch (DirectoryNotFoundException e) {
                     showMessageDialog("Error", "Folder not found:\n" + e.getMessage(), JOptionPane.ERROR_MESSAGE);
-                    throw new RuntimeException(e);
+                } catch (ClientException e) {
+                    showMessageDialog("Connection error", "Check your internet connection and try again.", JOptionPane.ERROR_MESSAGE);
+                } catch (ApiException e) {
+                    showMessageDialog("Api error", "Check your token and try again.", JOptionPane.ERROR_MESSAGE);
                 }
             } else {
                 try {
-                    fsm.deleteFile(MainWindow.getCurrentDirectory() , video);
+                    fsm.deleteFile(MainWindow.getCurrentDirectory(), video);
                     fsm.updateTopic();
-                    vlm.deleteVideo(MainWindow.getCurrentDirectory() , video);
-                } catch (FileSystemManager.FileNotFoundException | FileSystemManager.DirectoryNotFoundException |ClientException | ApiException e) {
+                    vlm.deleteVideo(MainWindow.getCurrentDirectory(), video, fsm);
+                } catch (FileNotFoundException | DirectoryNotFoundException | ClientException | ApiException e) {
                     showMessageDialog("Error", "Error while removing video:\n" + e.getMessage(), JOptionPane.ERROR_MESSAGE);
-                    throw new RuntimeException(e);
                 }
             }
-            ((DefaultTableModel) table.getModel()).removeRow(row);
-            table.clearSelection();
-            table.editingStopped(null);
         } else {
             System.out.println("Deletion canceled.");
         }
@@ -108,7 +116,7 @@ class ActionButtonEditor extends DefaultCellEditor {
 
     private void infoAction() {
         try {
-            String meta = vlm.getVideoMetadata(MainWindow.getCurrentDirectory(), table.getValueAt(row, 0).toString());
+            String meta = vlm.getVideoMetadata(MainWindow.getCurrentDirectory(), table.getValueAt(row, 0).toString(), fsm);
             showMessageDialog("Video meta:\n", meta, JOptionPane.INFORMATION_MESSAGE);
         } catch (ClientException | ApiException e) {
             showMessageDialog("Error", "Error while loading meta:\n" + e.getMessage(), JOptionPane.ERROR_MESSAGE);
@@ -120,12 +128,20 @@ class ActionButtonEditor extends DefaultCellEditor {
     }
 
     private void linkAction() {
+        if (table.getValueAt(row, 1).toString().equals("Folder")) {
+            if (!(fsm instanceof FileSystemAlbumsManager fsma)) return;
+            String url = fsma.getAlbumLink(MainWindow.getCurrentDirectory() + table.getValueAt(row, 0).toString());
+            Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
+            clipboard.setContents(new StringSelection(url), null);
+            return;
+        }
         try {
             URI url = vlm.getVideoLink(MainWindow.getCurrentDirectory(), table.getValueAt(row, 0).toString());
             Utils.openWebpage(url);
+            Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
+            clipboard.setContents(new StringSelection(url.toString()), null);
         } catch (ClientException | ApiException e) {
             showMessageDialog("Error", "Video link not found:\n" + e.getMessage(), JOptionPane.ERROR_MESSAGE);
-            throw new RuntimeException(e);
         }
         System.out.println("Link " + row);
     }

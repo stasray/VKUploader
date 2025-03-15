@@ -26,11 +26,16 @@ class ActionButtonRenderer extends JPanel implements TableCellRenderer {
     public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
         removeAll();
 
-        if (!"-".equals(table.getValueAt(row, 1)))
+        if (row < 0 || row >= table.getRowCount()) {
+            return this;
+        }
+
+        if (!"-".equals(table.getValueAt(row, 1))) {
+            add(createButton(linkIcon));
             add(createButton(deleteIcon));
+        }
         if ("File".equals(table.getValueAt(row, 1))) {
             add(createButton(infoIcon));
-            add(createButton(linkIcon));
         }
 
         setOpaque(true);

@@ -6,8 +6,11 @@ import com.vk.api.sdk.client.actors.UserActor;
 import com.vk.api.sdk.exceptions.ApiException;
 import com.vk.api.sdk.exceptions.ClientException;
 import com.vk.api.sdk.httpclient.HttpTransportClient;
+import org.example.exceptions.DirectoryAlreadyExistsException;
+import org.example.exceptions.DirectoryNotFoundException;
+import org.example.exceptions.FileNotFoundException;
+import org.example.managers.*;
 import org.example.managers.FileSystemManager;
-import org.example.managers.VideoLoaderManager;
 import org.example.ui.MainWindow;
 
 import javax.swing.*;
@@ -17,20 +20,13 @@ import java.awt.datatransfer.StringSelection;
 import java.io.File;
 import java.util.*;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 import static java.lang.System.out;
 
 public class Main {
 
-    private static long groupId = 0L;
-    private static boolean gui = true;
-    private static String token = "---";
     public static int MAX_CONCURRENT_UPLOADS = 5;
-
     private static String currDirectory = "/";
-
     private static FileSystemManager fsm = null;
     private static VideoLoaderManager vlm = null;
 
@@ -43,160 +39,185 @@ public class Main {
             MAX_CONCURRENT_UPLOADS = 5;
         }
 
-        gui = false; //Boolean.parseBoolean(System.getenv("GUI"));
+        boolean gui = true; //Boolean.parseBoolean(System.getenv("GUI"));
 
         TransportClient transportClient = new HttpTransportClient();
         VkApiClient vk = new VkApiClient(transportClient);
 
-        if (gui) {
-            System.setProperty("apple.awt.application.appearance", "NSAppearanceNameVibrantDark");
-            SwingUtilities.invokeLater(() -> {
-                String authUrl = showAuthDialog("https://oauth.vk.com/authorize?client_id=52502099&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=friends,video,groups&response_type=token&v=5.59");
+        String[] credentials = CredentialManager.loadCredentials();
+        String token = (credentials != null) ? credentials[0] : null;
+        long groupId = (credentials != null) ? Long.parseLong(credentials[1]) : -1;
+        UserActor actor = null;
 
-                if (authUrl == null || authUrl.trim().isEmpty()) {
-                    JOptionPane.showMessageDialog(null, "Error: link is not entered!", "Error", JOptionPane.ERROR_MESSAGE);
-                    System.exit(1);
+        while (true) {
+            if (token == null || groupId <= 0) {
+                if (gui) {
+                    token = authenticateWithGUI();
+                } else {
+                    token = authenticateWithCLI();
+                }
+                if (token == null) {
+                    out.println("Token is invalid.");
+                    continue;
                 }
 
-                if (authUrl.contains("access_token=")) {
-                    token = authUrl.substring(authUrl.indexOf("access_token=") + 13);
-                    if (token.contains("&")) {
-                        token = token.substring(0, token.indexOf("&"));
-                    }
+                if (gui) {
+                    groupId = requestGroupIdWithGUI();
+                } else {
+                    groupId = requestGroupId();
                 }
 
-                String groupIdS = JOptionPane.showInputDialog(
-                        null,
-                        "Input group ID:",
-                        "Group ID",
-                        JOptionPane.QUESTION_MESSAGE
-                );
-
-                if (groupIdS == null || groupIdS.trim().isEmpty()) {
-                    JOptionPane.showMessageDialog(null, "Group ID not entered", "Errpr", JOptionPane.ERROR_MESSAGE);
-                    System.exit(1);
-                }
-                try {
-                    groupId = Long.parseLong(groupIdS);
-                } catch (NumberFormatException e) {
-                    JOptionPane.showMessageDialog(null, "Group ID is incorrect", "Error", JOptionPane.ERROR_MESSAGE);
-                    System.exit(1);
-                }
-
-                UserActor actor = new UserActor(198248840L, token);
-                fsm = new FileSystemManager(vk, actor, groupId);
+                actor = new UserActor(198248840L, token);
+                fsm = new FileSystemAlbumsManager(vk, actor, groupId);
                 vlm = new VideoLoaderManager(vk, actor, groupId);
-                try {
-                    fsm.syncWithVk();
-                } catch (ClientException e) {
-                    JOptionPane.showMessageDialog(null, "Connection error. Check internet connection", "Error", JOptionPane.ERROR_MESSAGE);
-                    throw new RuntimeException(e);
-                } catch (ApiException e) {
-                    JOptionPane.showMessageDialog(null, "Token is invalid", "Error", JOptionPane.ERROR_MESSAGE);
-                    System.exit(1);
-                    throw new RuntimeException(e);
-                }
 
-                MainWindow dialog = new MainWindow(fsm, vlm);
-                dialog.pack();
-                dialog.setLocationRelativeTo(null);
-                dialog.setVisible(true);
-                System.exit(0);
-            });
-            return;
-        }
-
-        Scanner scanner = new Scanner(System.in);
-
-        System.out.println("Authorize by visiting the following link and paste the redirected URL here:");
-        System.out.println("https://oauth.vk.com/authorize?client_id=52502099&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=friends,video,groups&response_type=token&v=5.59");
-        System.out.print("Enter the URL: ");
-
-        String authUrl = scanner.nextLine().trim();
-
-        if (authUrl.isEmpty()) {
-            System.err.println("Error: link is not entered!");
-            System.exit(1);
-        }
-
-        String token = null;
-        if (authUrl.contains("access_token=")) {
-            token = authUrl.substring(authUrl.indexOf("access_token=") + 13);
-            if (token.contains("&")) {
-                token = token.substring(0, token.indexOf("&"));
+                CredentialManager.saveCredentials(token, groupId);
+            } else {
+                actor = new UserActor(198248840L, token);
+                fsm = new FileSystemAlbumsManager(vk, actor, groupId);
+                vlm = new VideoLoaderManager(vk, actor, groupId);
+            }
+            if (CredentialManager.isTokenValid(fsm)) {
+                break;
+            } else {
+                token = null;
+                groupId = 0L;
             }
         }
 
-        if (token == null || token.isEmpty()) {
-            System.err.println("Error: Invalid token!");
-            System.exit(1);
+        if (gui) {
+            System.setProperty("apple.awt.application.appearance", "NSAppearanceNameVibrantDark");
+            startGUI();
+        } else {
+            startCLI();
         }
+    }
 
+    private static String authenticateWithGUI() {
+        String authUrl = "https://oauth.vk.com/authorize?client_id=52502099&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=friends,video,groups&response_type=token&v=5.59";
+        String userInput = showAuthDialog(authUrl);
+        return extractToken(userInput);
+    }
+
+    private static String authenticateWithCLI() {
+        Scanner scanner = new Scanner(System.in);
+        System.out.println("Authorize by visiting the following link and paste the redirected URL here:");
+        System.out.println("https://oauth.vk.com/authorize?client_id=52502099&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=friends,video,groups&response_type=token&v=5.59");
+        System.out.print("Enter the URL: ");
+        String authUrl = scanner.nextLine().trim();
+        return extractToken(authUrl);
+    }
+
+    private static long requestGroupId() {
+        Scanner scanner = new Scanner(System.in);
         System.out.print("Enter Group ID: ");
-        String groupIdS = scanner.nextLine().trim();
-
-        if (groupIdS.isEmpty()) {
-            System.err.println("Error: Group ID not entered!");
-            System.exit(1);
+        while (true) {
+            try {
+                return Long.parseLong(scanner.nextLine().trim());
+            } catch (NumberFormatException e) {
+                System.out.print("Invalid ID. Enter again: ");
+            }
         }
+    }
 
-        long groupId;
-        try {
-            groupId = Long.parseLong(groupIdS);
-        } catch (NumberFormatException e) {
-            System.err.println("Error: Group ID is incorrect!");
-            System.exit(1);
-            return;
+    private static long requestGroupIdWithGUI() {
+        while (true) {
+            String input = JOptionPane.showInputDialog(null, "Enter Group ID:", "Group ID", JOptionPane.QUESTION_MESSAGE);
+
+            if (input == null) {
+                JOptionPane.showMessageDialog(null, "Group ID entering is canceled", "Error", JOptionPane.ERROR_MESSAGE);
+                System.exit(1);
+            }
+
+            try {
+                return Long.parseLong(input.trim());
+            } catch (NumberFormatException e) {
+                JOptionPane.showMessageDialog(null, "ID is incorrect.", "Error", JOptionPane.ERROR_MESSAGE);
+            }
         }
+    }
 
-        UserActor actor = new UserActor(198248840L, token);
-        FileSystemManager fsm = new FileSystemManager(vk, actor, groupId);
-        VideoLoaderManager vlm = new VideoLoaderManager(vk, actor, groupId);
-
-        try {
-            fsm.syncWithVk();
-        } catch (ClientException e) {
-            System.err.println("Error: Connection error. Check your internet connection.");
-            System.exit(1);
-        } catch (ApiException e) {
-            System.err.println("Error: Token is invalid.");
-            System.exit(1);
+    private static String extractToken(String authUrl) {
+        if (authUrl.contains("access_token=")) {
+            String token = authUrl.substring(authUrl.indexOf("access_token=") + 13);
+            if (token.contains("&")) {
+                token = token.substring(0, token.indexOf("&"));
+            }
+            return token;
         }
+        return null;
+    }
 
+    private static void startGUI() {
+        SwingUtilities.invokeLater(() -> {
+            MainWindow dialog = new MainWindow(fsm, vlm);
+            dialog.pack();
+            dialog.setLocationRelativeTo(null);
+            dialog.setVisible(true);
+            System.exit(0);
+        });
+    }
+
+    private static void startCLI() {
+        Scanner scanner = new Scanner(System.in);
         System.out.println("VK Video Uploader CLI started. Type 'help' for available commands.");
 
-
         while (true) {
-            out.print(currDirectory + " > ");
-            String[] cmdfull = scanner.nextLine().trim().split(" ");
+            System.out.print("> ");
+            String input = scanner.nextLine().trim();
+
+            if (input.isEmpty()) continue;
+
+            String[] cmdfull = input.split(" ");
             String cmd = cmdfull[0];
             String[] args = Arrays.copyOfRange(cmdfull, 1, cmdfull.length);
 
             if (cmd.equalsIgnoreCase("exit")) {
-                out.println("VKVideoUploader stopped.");
+                System.out.println("VKVideoUploader stopped.");
                 break;
             }
+
             if (cmd.equalsIgnoreCase("help")) {
                 out.println("Commands:");
                 out.println(" exit - stop server");
                 out.println(" sync - sync with VK");
-                out.println(" ls - check files and subfolders in current folder.");
+                out.println(" ls - check files and subfolders in current folder. (-s for sync)");
                 out.println(" mkdir <name> - create folder");
                 out.println(" cd <path> - go to path folder");
                 out.println(" rmdir <name> - remove folder with all files and subfolders. WARNING! It will remove all video files in folder and subfolders!");
                 out.println(" rmfile <name> - remove file in current directory.");
                 out.println(" addvideo <path> - export videos from local path to VK. It can be folder with files or single file. Use -meta to save meta to comment.");
+                out.println(" setcredentials <token> <groupId> - change credentials");
+                continue;
+            }
+            if (cmd.equalsIgnoreCase("setcredentials")) {
+                if (args.length < 2) {
+                    System.out.println("Usage: setcredentials <token> <groupId>");
+                } else {
+                    String token = args[0];
+                    long groupId;
+                    try {
+                        groupId = Long.parseLong(args[1]);
+                        CredentialManager.saveCredentials(token, groupId);
+                        System.out.println("Credentials updated successfully. Restart the application.");
+                        System.exit(0);
+                    } catch (NumberFormatException e) {
+                        System.out.println("Invalid groupId format. It should be a number.");
+                    }
+                }
                 continue;
             }
             if (cmd.equalsIgnoreCase("ls")) {
-                try {
-                    fsm.syncWithVk();
-                } catch (ClientException e) {
-                    out.println("Error! Can't sync with VK! Check internet connection.");
-                    continue;
-                } catch (ApiException e) {
-                    out.println("Error! Can't sync with VK! Check token expire.");
-                    continue;
+                if (input.contains("-sync") || input.contains("-s")) {
+                    try {
+                        fsm.syncWithVk();
+                    } catch (ClientException e) {
+                        out.println("Error! Can't sync with VK! Check internet connection.");
+                        continue;
+                    } catch (ApiException e) {
+                        out.println("Error! Can't sync with VK! Check token expire.");
+                        continue;
+                    }
                 }
                 //TODO: учесть, что папка может быть удалена в момент использования
                 out.println("Files and folders in " + currDirectory);
@@ -254,7 +275,7 @@ public class Main {
                         newPath = currDirectory.endsWith("/") ? currDirectory + targetPath : currDirectory + "/" + targetPath;
                     }
 
-                    newPath = FileSystemManager.normalizePath(newPath);
+                    newPath = Utils.normalizePath(newPath);
 
                     if (fsm.isDirectoryExists(newPath)) {
                         currDirectory = newPath;
@@ -289,8 +310,12 @@ public class Main {
                     fsm.addDirectory(currDirectory + foldername);
                     fsm.updateTopic();
                     out.println("Folder created.");
-                } catch (FileSystemManager.DirectoryAlreadyExistsException e) {
+                } catch (DirectoryAlreadyExistsException e) {
                     out.println("Folder already exists.");
+                } catch (ClientException e) {
+                    out.println("Error! Can't sync with VK! Check internet connection.");
+                } catch (ApiException e) {
+                    out.println("Error! Can't sync with VK! Check token expire.");
                 }
                 continue;
             }
@@ -321,12 +346,12 @@ public class Main {
                     vlm.deleteVideosFromFolder(currDirectory + foldername);
                     out.println("Files removed.");
                     continue;
-                } catch (FileSystemManager.DirectoryNotFoundException e) {
+                } catch (DirectoryNotFoundException e) {
                     out.println("Folder not found.");
                 } catch (ClientException e) {
-                    throw new RuntimeException(e);
+                    out.println("Error! Can't sync with VK! Check internet connection.");
                 } catch (ApiException e) {
-                    throw new RuntimeException(e);
+                    out.println("Error! Can't sync with VK! Check token expire.");
                 }
             }
             if (cmd.equalsIgnoreCase("rmfile")) {
@@ -355,10 +380,10 @@ public class Main {
                     fsm.deleteFile(currDirectory, filename);
                     out.println("File removed.");
                     continue;
-                } catch (FileSystemManager.FileNotFoundException e) {
+                } catch (FileNotFoundException e) {
                     out.println("File not found.");
                     continue;
-                } catch (FileSystemManager.DirectoryNotFoundException e) {
+                } catch (DirectoryNotFoundException e) {
                     out.println("Directory not found.");
                     continue;
                 }
@@ -379,7 +404,7 @@ public class Main {
                 } else {
                     lst.add(dir);
                 }
-                vlm.loadVideo(currDirectory, lst);
+                vlm.loadVideo(currDirectory, lst, fsm);
             }
             else {
                 out.println("Command not found.");
@@ -404,11 +429,7 @@ public class Main {
         panel.add(copyButton, BorderLayout.SOUTH);
 
         int result = JOptionPane.showConfirmDialog(null, panel, "Authentication", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-
-        if (result == JOptionPane.OK_OPTION) {
-            return textField.getText();
-        }
-        return null;
+        return (result == JOptionPane.OK_OPTION) ? textField.getText() : null;
     }
 
     public static FileSystemManager getFileSystemManager() {

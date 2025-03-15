@@ -18,5 +18,21 @@ public class Utils {
         return false;
     }
 
+    public static String normalizePath(String path) {
+        if (path == null || path.isEmpty()) {
+            return "/";
+        }
+
+        if (!path.startsWith("/")) {
+            path = "/" + path;
+        }
+
+        if (!path.endsWith("/")) {
+            path = path + "/";
+        }
+
+        return path;
+    }
+
 
 }
