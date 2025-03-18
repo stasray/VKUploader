@@ -1,11 +1,12 @@
-package org.example;
+package ru.sanichik.utils;
 
 import java.awt.*;
 import java.net.URI;
 
 public class Utils {
+    private final static String FILE_NAME_PATTERN = "[0-9a-zA-Zа-яА-Я._ –-]+";
 
-    public static boolean openWebpage(URI uri) {
+    public static boolean openWebpage(final URI uri) {
         Desktop desktop = Desktop.isDesktopSupported() ? Desktop.getDesktop() : null;
         if (desktop != null && desktop.isSupported(Desktop.Action.BROWSE)) {
             try {
@@ -34,5 +35,7 @@ public class Utils {
         return path;
     }
 
-
+    public static boolean matchPattern(final String fileOrFolderName) {
+        return fileOrFolderName.matches(FILE_NAME_PATTERN);
+    }
 }

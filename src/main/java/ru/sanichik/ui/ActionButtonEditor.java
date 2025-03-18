@@ -1,14 +1,14 @@
-package org.example.ui;
+package ru.sanichik.ui;
 
 import com.vk.api.sdk.exceptions.ApiException;
 import com.vk.api.sdk.exceptions.ClientException;
-import org.example.Utils;
-import org.example.exceptions.DirectoryNotFoundException;
-import org.example.exceptions.FileNotFoundException;
-import org.example.managers.FileSystemAlbumsManager;
-import org.example.managers.FileSystemManager;
-import org.example.managers.FileSystemTopicsManager;
-import org.example.managers.VideoLoaderManager;
+import ru.sanichik.utils.Utils;
+import ru.sanichik.exceptions.DirectoryNotFoundException;
+import ru.sanichik.exceptions.FileNotFoundException;
+import ru.sanichik.managers.FileSystemAlbumsManager;
+import ru.sanichik.managers.FileSystemManager;
+import ru.sanichik.managers.VideoLoaderManager;
+import ru.sanichik.objects.VideoObject;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
@@ -17,6 +17,7 @@ import java.awt.datatransfer.Clipboard;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.ActionListener;
 import java.net.URI;
+import java.util.regex.Pattern;
 
 class ActionButtonEditor extends DefaultCellEditor {
     private JPanel panel;
@@ -40,6 +41,8 @@ class ActionButtonEditor extends DefaultCellEditor {
     private static final Icon infoIcon = loadIcon("/icons/info.png");
     private static final Icon linkIcon = loadIcon("/icons/link.png");
 
+    private static final Icon renameIcon = loadIcon("/icons/rename.png");
+
     public ActionButtonEditor(JCheckBox checkBox, VideoLoaderManager vlm, FileSystemManager fsm) {
         super(checkBox);
         this.vlm = vlm;
@@ -52,11 +55,16 @@ class ActionButtonEditor extends DefaultCellEditor {
         this.table = table;
         this.row = row;
 
+        if (row < 0 || row >= table.getRowCount()) {
+            return panel;
+        }
+
         panel.removeAll();
 
         if (!"-".equals(table.getValueAt(row, 1))) {
             panel.add(createButton(linkIcon, e -> linkAction()));
             panel.add(createButton(deleteIcon, e -> deleteAction()));
+            panel.add(createButton(renameIcon, e -> renameAction()));
         }
         if ("File".equals(table.getValueAt(row, 1))) {
             panel.add(createButton(infoIcon, e -> infoAction()));
@@ -102,9 +110,13 @@ class ActionButtonEditor extends DefaultCellEditor {
                 }
             } else {
                 try {
-                    fsm.deleteFile(MainWindow.getCurrentDirectory(), video);
-                    fsm.updateTopic();
-                    vlm.deleteVideo(MainWindow.getCurrentDirectory(), video, fsm);
+                    VideoObject videoObject = fsm.getVideo(MainWindow.getCurrentDirectory(), video);
+                    if (videoObject == null) {
+                        showMessageDialog("Error", "Video not found", JOptionPane.ERROR_MESSAGE);
+                        return;
+                    }
+                    fsm.deleteFile(MainWindow.getCurrentDirectory(), videoObject);
+                    vlm.deleteVideo(videoObject);
                 } catch (FileNotFoundException | DirectoryNotFoundException | ClientException | ApiException e) {
                     showMessageDialog("Error", "Error while removing video:\n" + e.getMessage(), JOptionPane.ERROR_MESSAGE);
                 }
@@ -115,16 +127,69 @@ class ActionButtonEditor extends DefaultCellEditor {
     }
 
     private void infoAction() {
-        try {
-            String meta = vlm.getVideoMetadata(MainWindow.getCurrentDirectory(), table.getValueAt(row, 0).toString(), fsm);
-            showMessageDialog("Video meta:\n", meta, JOptionPane.INFORMATION_MESSAGE);
-        } catch (ClientException | ApiException e) {
-            showMessageDialog("Error", "Error while loading meta:\n" + e.getMessage(), JOptionPane.ERROR_MESSAGE);
-        }
+        VideoObject video = fsm.getVideo(MainWindow.getCurrentDirectory(), table.getValueAt(row, 0).toString());
+        if (video == null) return;
+        String meta = video.getDescription();
+        showMessageDialog("Video meta:\n", meta, JOptionPane.INFORMATION_MESSAGE);
     }
 
     private void showMessageDialog(String title, String message, int messageType) {
         JOptionPane.showMessageDialog(null, message, title, messageType);
+    }
+
+    private void renameAction() {
+        if (table.getValueAt(row, 1).toString().equals("Folder")) {
+            String oldName = table.getValueAt(row, 0).toString();
+            String newName = (String) JOptionPane.showInputDialog(
+                    null,
+                    "Enter new folder name:",
+                    "Folder rename",
+                    JOptionPane.PLAIN_MESSAGE,
+                    null,
+                    null,
+                    oldName
+            );
+            try {
+                fsm.renameFolder(Utils.normalizePath(MainWindow.getCurrentDirectory() + oldName),
+                        Utils.normalizePath(MainWindow.getCurrentDirectory() + newName));
+            } catch (ClientException e) {
+                throw new RuntimeException(e);
+            } catch (ApiException e) {
+                throw new RuntimeException(e);
+            }
+
+            if (newName != null && Pattern.matches("[0-9a-zA-Zа-яА-Я_-]+", newName)) {
+                table.setValueAt(newName, row, 0); // Устанавливаем новое имя
+            } else if (newName != null) {
+                JOptionPane.showMessageDialog(null, "Incorrect symbols!", "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        } else if (table.getValueAt(row, 1).toString().equals("File")) {
+            String oldName = table.getValueAt(row, 0).toString();
+            String newName = (String) JOptionPane.showInputDialog(
+                    null,
+                    "Enter new file name:",
+                    "File rename",
+                    JOptionPane.PLAIN_MESSAGE,
+                    null,
+                    null,
+                    oldName
+            );
+            try {
+                VideoObject video = fsm.getVideo(MainWindow.getCurrentDirectory(), oldName);
+                if (video == null) return;
+                fsm.renameVideo(MainWindow.getCurrentDirectory(), video, newName);
+            } catch (ClientException e) {
+                throw new RuntimeException(e);
+            } catch (ApiException e) {
+                throw new RuntimeException(e);
+            }
+
+            if (newName != null && Pattern.matches("[0-9a-zA-Zа-яА-Я_-]+", newName)) {
+                table.setValueAt(newName, row, 0); // Устанавливаем новое имя
+            } else if (newName != null) {
+                JOptionPane.showMessageDialog(null, "Incorrect symbols!", "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        }
     }
 
     private void linkAction() {
@@ -136,7 +201,9 @@ class ActionButtonEditor extends DefaultCellEditor {
             return;
         }
         try {
-            URI url = vlm.getVideoLink(MainWindow.getCurrentDirectory(), table.getValueAt(row, 0).toString());
+            VideoObject video = fsm.getVideo(MainWindow.getCurrentDirectory(), table.getValueAt(row, 0).toString());
+            if (video == null) return;
+            URI url = vlm.getVideoLink(video);
             Utils.openWebpage(url);
             Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
             clipboard.setContents(new StringSelection(url.toString()), null);

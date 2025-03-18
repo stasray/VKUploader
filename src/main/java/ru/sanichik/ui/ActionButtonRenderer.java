@@ -1,4 +1,4 @@
-package org.example.ui;
+package ru.sanichik.ui;
 
 import javax.swing.*;
 import javax.swing.table.TableCellRenderer;
@@ -18,6 +18,8 @@ class ActionButtonRenderer extends JPanel implements TableCellRenderer {
     private static final Icon deleteIcon = loadIcon("/icons/delete.png");
     private static final Icon infoIcon = loadIcon("/icons/info.png");
     private static final Icon linkIcon = loadIcon("/icons/link.png");
+
+    private static final Icon renameIcon = loadIcon("/icons/rename.png");
     public ActionButtonRenderer() {
         setLayout(new FlowLayout(FlowLayout.CENTER, 5, 5));
     }
@@ -33,6 +35,7 @@ class ActionButtonRenderer extends JPanel implements TableCellRenderer {
         if (!"-".equals(table.getValueAt(row, 1))) {
             add(createButton(linkIcon));
             add(createButton(deleteIcon));
+            add(createButton(renameIcon));
         }
         if ("File".equals(table.getValueAt(row, 1))) {
             add(createButton(infoIcon));

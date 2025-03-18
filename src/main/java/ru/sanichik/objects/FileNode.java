@@ -1,4 +1,4 @@
-package org.example.objects;
+package ru.sanichik.objects;
 
 public class FileNode {
     private final String name;

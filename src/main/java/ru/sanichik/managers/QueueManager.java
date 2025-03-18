@@ -1,6 +1,6 @@
-package org.example.managers;
+package ru.sanichik.managers;
 
-import org.example.Main;
+import ru.sanichik.core.Main;
 
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;

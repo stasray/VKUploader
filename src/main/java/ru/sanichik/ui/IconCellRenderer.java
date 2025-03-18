@@ -1,4 +1,4 @@
-package org.example.ui;
+package ru.sanichik.ui;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;

@@ -1,4 +1,4 @@
-package org.example.exceptions;
+package ru.sanichik.exceptions;
 
 public class FileAlreadyExistsException extends Exception {
 }

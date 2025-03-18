@@ -1,20 +1,21 @@
-package org.example.managers;
+package ru.sanichik.managers;
 
 import com.vk.api.sdk.client.VkApiClient;
 import com.vk.api.sdk.client.actors.UserActor;
 import com.vk.api.sdk.exceptions.ApiException;
 import com.vk.api.sdk.exceptions.ClientException;
-import com.vk.api.sdk.objects.video.Video;
 import com.vk.api.sdk.objects.video.VideoFull;
 import com.vk.api.sdk.objects.video.responses.GetResponse;
+import com.vk.api.sdk.objects.video.responses.SaveResponse;
 import okhttp3.*;
 import okio.BufferedSink;
 import okio.BufferedSource;
 import okio.Okio;
-import org.example.Main;
-import org.example.Utils;
-import org.example.exceptions.DirectoryNotFoundException;
-import org.example.exceptions.FileAlreadyExistsException;
+import ru.sanichik.core.Main;
+import ru.sanichik.utils.Utils;
+import ru.sanichik.exceptions.DirectoryNotFoundException;
+import ru.sanichik.exceptions.FileAlreadyExistsException;
+import ru.sanichik.objects.VideoObject;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -44,7 +45,7 @@ public class VideoLoaderManager {
     private static final ConcurrentHashMap<String, Integer> progressMap = new ConcurrentHashMap<>();
 
 
-    public VideoLoaderManager(VkApiClient vk, UserActor actor, Long groupId) {
+    public VideoLoaderManager(final VkApiClient vk, final UserActor actor, final Long groupId) {
         this.vk = vk;
         this.actor = actor;
         this.groupId = groupId;
@@ -80,32 +81,38 @@ public class VideoLoaderManager {
                     String fileName = video.getName();
                     String fileNameWithoutExtension = fileName.substring(0, fileName.lastIndexOf('.'));
 
-                    String str;
+                    SaveResponse videoUploadResponse;
+                    String meta = getMetadata(video);
 
                     if (fsm instanceof FileSystemAlbumsManager &&
                             ((FileSystemAlbumsManager) fsm).getAlbumID(currDirectory) != null
                     ) {
                         int albumId = ((FileSystemAlbumsManager) fsm).getAlbumID(currDirectory);
-                        str = vk.video().save(actor)
+                        videoUploadResponse = vk.video().save(actor)
                                 .groupId(groupId)
                                 .albumId(albumId)
                                 .name(fileNameWithoutExtension)
-                                .description(currDirectory + video.getName() + "\n" + getMetadata(video))
-                                .execute().getUploadUrl().toString();
+                                .description(meta)
+                                .execute();
                     } else {
-                        str = vk.video().save(actor)
+                        videoUploadResponse = vk.video().save(actor)
                                 .groupId(groupId)
                                 .name(fileNameWithoutExtension)
-                                .description(currDirectory + video.getName() + "\n" + getMetadata(video))
-                                .execute().getUploadUrl().toString();
+                                .description(meta)
+                                .execute();
                     }
 
                     out.printf("Sending video %s...%n", video.getName());
-                    uploadVideo(str, video.getAbsolutePath(), currDirectory + video.getName());
+                    uploadVideo(videoUploadResponse
+                            .getUploadUrl().toString(),
+                            video.getAbsolutePath(),
+                            currDirectory + video.getName()
+                    );
 
                     progressMap.put(currDirectory + video.getName(), 100);
 
-                    Main.getFileSystemManager().addFile(currDirectory, video.getName());
+                    Main.getFileSystemManager().addFile(currDirectory, new VideoObject(videoUploadResponse.getVideoId(),
+                            fileNameWithoutExtension, meta));
                     out.printf("Video successful loaded: %s\n", video.getName());
 
                     if (id.get() == size) {
@@ -157,95 +164,26 @@ public class VideoLoaderManager {
         }
     }
 
-    public void deleteVideo(String directory, String videoTitle, FileSystemManager fsm) throws ClientException, ApiException {
-        List<VideoFull> list;
-        if (fsm instanceof FileSystemAlbumsManager &&
-                ((FileSystemAlbumsManager) fsm).getAlbumID(Utils.normalizePath(directory)) != null) {
-            int albumId = ((FileSystemAlbumsManager) fsm).getAlbumID(Utils.normalizePath(directory));
-            list = vk.video().get(actor).ownerId(groupId * -1L).albumId(albumId).execute().getItems();
-        } else {
-            list = vk.video().get(actor).ownerId(groupId * -1L).execute().getItems();
-        }
-        for (VideoFull video : list) {
-            if (video.getDescription().split("\\R")[0].startsWith(directory + videoTitle)) {
-                vk.video().delete(actor, video.getId()).ownerId(groupId * -1L).execute();
-                out.println("Removing videofile from album...");
-            }
-        }
+    public void deleteVideo(VideoObject video) throws ClientException, ApiException {
+        out.println("Removing videofile from album...");
+        vk.video().delete(actor, video.getId()).ownerId(groupId * -1L).execute();
+        out.println("Video removed!");
+
     }
 
-    public String getVideoMetadata(String directory, String video, FileSystemManager fsm) throws ClientException, ApiException {
-        String videoTitle = directory + video;
-        int offset = 0;
-        int count = 100;
+    public URI getVideoLink(VideoObject video) throws ClientException, ApiException {
+        GetResponse response = vk.video().get(actor)
+                .ownerId(-groupId)
+                .videos("-" + groupId + "_" + video.getId())
+                .extended(true)
+                .execute();
 
-        while (true) {
-            GetResponse response;
-
-            if (fsm instanceof FileSystemAlbumsManager &&
-                    ((FileSystemAlbumsManager) fsm).getAlbumID(Utils.normalizePath(directory)) != null) {
-                int albumId = ((FileSystemAlbumsManager) fsm).getAlbumID(Utils.normalizePath(directory));
-                response = vk.video().get(actor)
-                        .ownerId(-groupId)
-                        .albumId(albumId)
-                        .count(count)
-                        .offset(offset)
-                        .extended(true)
-                        .execute();
-            } else {
-                response = vk.video().get(actor)
-                        .ownerId(-groupId)
-                        .count(count)
-                        .offset(offset)
-                        .extended(true)
-                        .execute();
-            }
-
-
-
-            List<VideoFull> videos = response.getItems();
-            if (videos == null || videos.isEmpty()) {
-                return "Metadata not saved for " + videoTitle;
-            }
-
-            for (Video vid : videos) {
-                if (vid.getDescription().split("\\R")[0].equals(videoTitle)) {
-                    return vid.getDescription();
-                }
-            }
-
-            offset += count;
+        List<VideoFull> videos = response.getItems();
+        if (videos == null || videos.isEmpty()) {
+            throw new ClientException("Link not found for " + video.getTitle());
         }
-    }
 
-    public URI getVideoLink(String directory, String video) throws ClientException, ApiException {
-        String videoTitle = directory + video;
-        int offset = 0;
-        int count = 100;
-
-        while (true) {
-            GetResponse response = vk.video().get(actor)
-                    .ownerId(-groupId)
-                    .count(count)
-                    .offset(offset)
-                    .extended(true)
-                    .execute();
-
-            //через get videos и get albums
-
-            List<VideoFull> videos = response.getItems();
-            if (videos == null || videos.isEmpty()) {
-                throw new ClientException("Link not found for " + videoTitle);
-            }
-
-            for (Video vid : videos) {
-                if (vid.getDescription().split("\\R")[0].equals(videoTitle)) {
-                    return vid.getPlayer();
-                }
-            }
-
-            offset += count;
-        }
+        return videos.get(0).getPlayer();
     }
 
     private static String getMetadata(File video) {
@@ -338,7 +276,6 @@ public class VideoLoaderManager {
             System.out.println("Upload complete for " + videoFile.getName());
         }
     }
-
 
     static class ProgressRequestBody extends RequestBody {
         private final File file;

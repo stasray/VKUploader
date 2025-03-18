@@ -1,12 +1,13 @@
-package org.example.ui;
+package ru.sanichik.ui;
 
 
 import com.vk.api.sdk.exceptions.ApiException;
 import com.vk.api.sdk.exceptions.ClientException;
-import org.example.Utils;
-import org.example.exceptions.DirectoryAlreadyExistsException;
-import org.example.managers.FileSystemManager;
-import org.example.managers.VideoLoaderManager;
+import ru.sanichik.utils.Utils;
+import ru.sanichik.exceptions.DirectoryAlreadyExistsException;
+import ru.sanichik.managers.FileSystemManager;
+import ru.sanichik.managers.VideoLoaderManager;
+import ru.sanichik.objects.VideoObject;
 
 import javax.swing.*;
 import javax.swing.border.TitledBorder;
@@ -93,10 +94,7 @@ public class MainWindow extends JDialog {
             fileTable.getColumnModel().getColumn(i).setCellRenderer(new IconCellRenderer(tableModel));
         }
         fileTable.getColumnModel().getColumn(2).setCellRenderer(new ActionButtonRenderer());
-        fileTable.getColumnModel().getColumn(2).setCellEditor(new ActionButtonEditor(
-                new JCheckBox(),
-                vlm,
-                fsm));
+        fileTable.getColumnModel().getColumn(2).setCellEditor(new ActionButtonEditor(new JCheckBox(), vlm, fsm));
 
         fileTable.setShowGrid(false);
         fileTable.setBorder(BorderFactory.createEmptyBorder());
@@ -163,11 +161,14 @@ public class MainWindow extends JDialog {
 
     private void refreshTable() {
         try {
+            JViewport viewport = (JViewport) fileTable.getParent();
+            Point scrollPosition = viewport.getViewPosition(); // Запоминаем позицию скролла
+
             currentDirectoryLabel.setText(currentDirectory);
             tableModel.setRowCount(0);
 
             Set<String> folders = fsm.getFolders(currentDirectory);
-            List<String> files = fsm.getFiles(currentDirectory);
+            List<VideoObject> files = fsm.getFiles(currentDirectory);
 
             if (!currentDirectory.equals("/")) {
                 tableModel.addRow(new Object[]{"...", "-", "-"});
@@ -187,8 +188,8 @@ public class MainWindow extends JDialog {
                 }
             }
 
-            for (String file : files) {
-                tableModel.addRow(new Object[]{file.replaceAll("/", ""), "File", ""});
+            for (VideoObject file : files) {
+                tableModel.addRow(new Object[]{file.getTitle().replaceAll("/", ""), "File", ""});
             }
             Set<Map.Entry<String, Integer>> progresses = vlm.getProgresses(currentDirectory).entrySet();
             for (Map.Entry<String, Integer> entry : progresses) {
@@ -201,6 +202,9 @@ public class MainWindow extends JDialog {
                 }
 
             }
+
+            SwingUtilities.invokeLater(() -> viewport.setViewPosition(scrollPosition));
+
         } catch (Exception e) {
             e.printStackTrace(); // Можно обработать исключения
         }
@@ -216,8 +220,7 @@ public class MainWindow extends JDialog {
                     tableModel.addRow(new Object[]{folderName, "Folder", ""});
                     fsm.updateTopic();
                 } catch (DirectoryAlreadyExistsException e) {
-                    JOptionPane.showMessageDialog(null, "Directory already exists.",
-                            "Error", JOptionPane.ERROR_MESSAGE);
+                    JOptionPane.showMessageDialog(null, "Directory already exists.", "Error", JOptionPane.ERROR_MESSAGE);
                     throw new RuntimeException(e);
                 } catch (ClientException e) {
                     JOptionPane.showMessageDialog(null, "Connection error", "Check your internet connection and try again.", JOptionPane.ERROR_MESSAGE);
@@ -226,8 +229,7 @@ public class MainWindow extends JDialog {
                 }
 
             } else {
-                JOptionPane.showMessageDialog(null, "Invalid folder name! Use only letters, numbers, '_', and '-'.",
-                        "Error", JOptionPane.ERROR_MESSAGE);
+                JOptionPane.showMessageDialog(null, "Invalid folder name! Use only letters, numbers, '_', and '-'.", "Error", JOptionPane.ERROR_MESSAGE);
             }
         } else {
             System.out.println("Folder creation canceled.");
@@ -240,10 +242,7 @@ public class MainWindow extends JDialog {
         fileChooser.setDialogTitle("Select Video File(s)");
         fileChooser.setMultiSelectionEnabled(true); // Разрешаем выбирать несколько файлов
 
-        FileNameExtensionFilter filter = new FileNameExtensionFilter(
-                "Video Files (*.mp4, *.avi, *.mkv, *.mov, *.wmv, *.flv, *.webm, *.mpeg, *.3gp, *.ogg)",
-                "mp4", "avi", "mkv", "mov", "wmv", "flv", "webm", "mpeg", "3gp", "ogg"
-        );
+        FileNameExtensionFilter filter = new FileNameExtensionFilter("Video Files (*.mp4, *.avi, *.mkv, *.mov, *.wmv, *.flv, *.webm, *.mpeg, *.3gp, *.ogg)", "mp4", "avi", "mkv", "mov", "wmv", "flv", "webm", "mpeg", "3gp", "ogg");
         fileChooser.setFileFilter(filter);
 
         int returnValue = fileChooser.showOpenDialog(null);

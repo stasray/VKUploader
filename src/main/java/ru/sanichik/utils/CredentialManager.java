@@ -1,7 +1,8 @@
-package org.example.managers;
+package ru.sanichik.utils;
 
 import com.vk.api.sdk.exceptions.ApiException;
 import com.vk.api.sdk.exceptions.ClientException;
+import ru.sanichik.managers.FileSystemManager;
 
 import java.io.File;
 import java.io.FileReader;
