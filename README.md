@@ -65,7 +65,7 @@ docker run -it -v "ДОМАШНЯЯ_ДИРЕКТОРИЯ":/root krut74891/vk-vid
 
 
 ```bash
-docker run -p 6080:6080 -v "ДОМАШНЯЯ_ДИРЕКТОРИЯ":/root -e GUI=true TOKEN="" GROUP="" krut74891/vk-video-uploader:latest
+docker run -p 6080:6080 -v "ДОМАШНЯЯ_ДИРЕКТОРИЯ":/root -e GUI=true -e TOKEN="" -e GROUP="" krut74891/vk-video-uploader:latest
 ```
 
 После запуска утилита станет доступна в браузере по адресу `localhost:6080`.
