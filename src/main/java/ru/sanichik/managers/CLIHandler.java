@@ -77,7 +77,12 @@ public class CLIHandler {
             syncWithVK();
         }
         System.out.println("Files and folders in " + Main.currDirectory);
-        fsm.getFolders(Main.currDirectory).forEach(logger::info);
+        for (String folder : fsm.getFolders(Main.currDirectory)) {
+            folder = folder.replaceFirst(Main.currDirectory, "");
+            folder = folder.substring(0, folder.length()-1);
+            if (folder.contains("/")) continue;
+            
+        }
         fsm.getFiles(Main.currDirectory).forEach(v -> System.out.println(v.getTitle()));
     }
 
@@ -91,14 +96,14 @@ public class CLIHandler {
 
     private void createDirectory(String[] args) {
         if (args.length != 1 || !Utils.matchPattern(args[0])) {
-            logger.warning("Invalid folder name.");
+            System.out.println("Invalid folder name.");
             return;
         }
         try {
             fsm.addDirectory(Main.currDirectory + args[0]);
             System.out.println("Folder created.");
         } catch (DirectoryAlreadyExistsException e) {
-            logger.warning("Folder already exists.");
+            System.out.println("Folder already exists.");
         } catch (ClientException | ApiException e) {
             logger.severe("Error! Check internet connection or token.");
         }
@@ -106,7 +111,7 @@ public class CLIHandler {
 
     private void removeDirectory(String[] args) {
         if (args.length != 1) {
-            logger.warning("Usage: rmdir <folder_name>");
+            System.out.println("Usage: rmdir <folder_name>");
             return;
         }
         try {
@@ -114,7 +119,7 @@ public class CLIHandler {
             vlm.deleteVideosFromFolder(Main.currDirectory + args[0]);
             System.out.println("Folder removed.");
         } catch (DirectoryNotFoundException e) {
-            logger.warning("Folder not found.");
+            System.out.println("Folder not found.");
         } catch (ClientException | ApiException e) {
             logger.severe("Error! Check internet connection or token.");
         }
@@ -122,7 +127,7 @@ public class CLIHandler {
 
     private void removeFile(String[] args) {
         if (args.length != 1) {
-            logger.warning("Usage: rmfile <name>");
+            System.out.println("Usage: rmfile <name>");
             return;
         }
         try {
@@ -131,9 +136,9 @@ public class CLIHandler {
             fsm.deleteFile(Main.currDirectory, video);
             System.out.println("File removed.");
         } catch (FileNotFoundException e) {
-            logger.warning("File not found.");
+            System.out.println("File not found.");
         } catch (DirectoryNotFoundException e) {
-            logger.warning("Directory not found.");
+            System.out.println("Directory not found.");
         } catch (ClientException | ApiException e) {
             logger.severe("Error! Check internet connection or token.");
         }
@@ -141,7 +146,7 @@ public class CLIHandler {
 
     private void addVideo(String[] args) {
         if (args.length == 0) {
-            logger.warning("Usage: addvideo <path>");
+            System.out.println("Usage: addvideo <path>");
             return;
         }
         File file = new File(args[0]);
@@ -152,7 +157,7 @@ public class CLIHandler {
 
     private void changeDirectory(String[] args) {
         if (args.length != 1) {
-            logger.warning("Usage: cd <path>");
+            System.out.println("Usage: cd <path>");
             return;
         }
         String newPath = args[0].equals("..") ? Main.currDirectory.substring(0, Main.currDirectory.lastIndexOf("/")) : Main.currDirectory + args[0];
@@ -160,7 +165,7 @@ public class CLIHandler {
         if (fsm.isDirectoryExists(newPath)) {
             Main.currDirectory = newPath;
         } else {
-            logger.warning("Directory not found.");
+            System.out.println("Directory not found.");
         }
     }
 }

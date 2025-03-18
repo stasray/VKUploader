@@ -7,12 +7,14 @@ import ru.sanichik.managers.VideoLoaderManager;
 import ru.sanichik.ui.MainWindow;
 
 import javax.swing.*;
-public class Main {
 
+public class Main {
     public final static int MAX_CONCURRENT_UPLOADS = 5;
     public static String currDirectory = "/";
     private static FileSystemManager fsm = null;
     private static VideoLoaderManager vlm = null;
+
+    //docker buildx build --platform linux/amd64,linux/arm64 -t krut74891/vk-video-uploader:latest --push .
 
     public static void main(String[] args) {
         boolean gui = Boolean.parseBoolean(System.getenv("GUI"));

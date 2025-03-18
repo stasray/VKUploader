@@ -85,7 +85,7 @@ public class AuthManager {
         return vlm;
     }
 
-    private static String extractToken(String authUrl) {
+    public static String extractToken(String authUrl) {
         if (authUrl.contains("access_token=")) {
             String token = authUrl.substring(authUrl.indexOf("access_token=") + 13);
             if (token.contains("&")) {

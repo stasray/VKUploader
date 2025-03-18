@@ -2,6 +2,7 @@ package ru.sanichik.utils;
 
 import com.vk.api.sdk.exceptions.ApiException;
 import com.vk.api.sdk.exceptions.ClientException;
+import ru.sanichik.auth.AuthManager;
 import ru.sanichik.managers.FileSystemManager;
 
 import java.io.File;
@@ -25,6 +26,13 @@ public class CredentialManager {
     }
 
     public static String[] loadCredentials() {
+        String tokenStr = AuthManager.extractToken(System.getenv("TOKEN"));
+        String groupIdStr = System.getenv("GROUP");
+
+        if (tokenStr != null && groupIdStr != null) {
+            return new String[]{tokenStr, groupIdStr};
+        }
+
         File file = new File(CREDENTIALS_FILE);
         if (!file.exists()) return null;
 
