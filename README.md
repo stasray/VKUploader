@@ -95,7 +95,7 @@ sudo docker run -p 6080:6080 -v "ДОМАШНЯЯ_ДИРЕКТОРИЯ":/root -e
 1. **Клонируйте репозиторий**  
 
 ```bash
-git clone https://github.com/ваш-репозиторий/VK-VideoUploader.git
+git clone https://github.com/stasray/VK-VideoUploader.git
 cd VK-VideoUploader
 ```
 
