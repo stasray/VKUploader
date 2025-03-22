@@ -64,7 +64,7 @@ sudo docker run -it -v "ДОМАШНЯЯ_ДИРЕКТОРИЯ":/root krut74891/v
 Графический интерфейс работает на базе noVNC, в котором часто имеются проблемы с буфером обмена, поэтому рекомендуем прямо в команде указать токен и айди группы.
 
 ```bash
-docker run -p 6080:6080 -v "ДОМАШНЯЯ_ДИРЕКТОРИЯ":/root -e GUI=true -e TOKEN="" -e GROUP="" krut74891/vk-video-uploader:latest
+sudo docker run -p 6080:6080 -v "ДОМАШНЯЯ_ДИРЕКТОРИЯ":/root -e GUI=true -e TOKEN="" -e GROUP="" krut74891/vk-video-uploader:latest
 ```
 
 После запуска утилита станет доступна в браузере по адресу `localhost:6080`.
