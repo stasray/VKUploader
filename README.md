@@ -55,7 +55,7 @@ docker run -it -v "ДОМАШНЯЯ_ДИРЕКТОРИЯ":/root krut74891/vk-vid
 | Параметр       | Описание |
 |---------------|----------|
 | TOKEN         | Вставьте сюда ссылку целиком из адресной строки после авторизации на [этой странице](https://oauth.vk.com/authorize?client_id=52502099&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=friends,video,group,offlines&response_type=token&v=5.59). |
-| GROUP      | Укажите числовой ID вашей группы ВКонтакте. (Можно получить на [этом сайте](https://regvk.com/id/) |
+| GROUP      | Укажите числовой ID вашей группы ВКонтакте. (Можно получить на [этом сайте](https://regvk.com/id/)) |
 
 **Готово! Если вы указали все параметры, утилита должна запуститься.**
 
